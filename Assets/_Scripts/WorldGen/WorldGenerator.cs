@@ -4,7 +4,7 @@ using UnityEngine;
 using UnityEngine.Tilemaps;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  WorldObjectData — dual-position container
+//  WorldObjectData
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 public class WorldObjectData
 {
@@ -17,34 +17,41 @@ public class WorldObjectData
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  SpawnableObjectConfig
-//  Right-click Project → Create → WorldGen → Spawnable Object
+//  Right-click → Create → WorldGen → Spawnable Object
+//  Đặt file này vào: Assets/Prefabs/WorldObjects/[tên_thư_mục]/
+//  WorldGenerator sẽ tự tìm tất cả config trong các sub-folder đó
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [CreateAssetMenu(fileName = "SpawnableObject", menuName = "WorldGen/Spawnable Object")]
 public class SpawnableObjectConfig : ScriptableObject
 {
-    public string     objectName;
+    [Tooltip("Tên hiển thị (không bắt buộc phải trùng tên file)")]
+    public string objectName;
+
+    [Tooltip("Prefab sẽ được Instantiate")]
     public GameObject prefab;
 
     [Header("Spawn Rules")]
-    [Tooltip("Tile nào object được phép spawn lên")]
+    [Tooltip("Tile nào object được phép spawn lên\n" +
+             "Để trống = spawn trên mọi tile đất liền")]
     public TileBase[] allowedTiles;
 
     [Range(0f, 1f)]
-    [Tooltip("Xác suất spawn mỗi tile phù hợp\nGợi ý: cây 0.06 | đá 0.03 | hoa 0.08")]
+    [Tooltip("Xác suất spawn mỗi tile phù hợp\n" +
+             "Gợi ý: cây lớn 0.05 | đá 0.03 | hoa 0.08 | cỏ nhỏ 0.12")]
     public float spawnChance = 0.05f;
 
     [Header("Clustering — tạo cụm tự nhiên")]
-    [Tooltip("Dùng Perlin noise để tạo cụm (rừng, mỏ đá...)")]
-    public bool  useClusterNoise    = true;
-    public float clusterNoiseScale  = 0.15f;
+    [Tooltip("Bật để object tụm thành cụm (rừng, mỏ đá...)")]
+    public bool useClusterNoise    = true;
+    public float clusterNoiseScale = 0.15f;
     [Range(0f, 1f)]
-    [Tooltip("Ngưỡng noise cụm. Cao = cụm nhỏ/ít | Thấp = cụm lớn/nhiều")]
-    public float clusterThreshold   = 0.55f;
+    [Tooltip("Cao = cụm nhỏ/ít | Thấp = cụm rộng/nhiều\nGợi ý: 0.45 – 0.65")]
+    public float clusterThreshold  = 0.55f;
 
     [Header("Placement")]
-    [Tooltip("Offset Y để đặt object lên mặt tile\nGợi ý: 0.05 – 0.15")]
+    [Tooltip("Offset Y để đặt object lên mặt tile\nGợi ý: 0.05 – 0.20")]
     public float yOffset        = 0.1f;
-    [Tooltip("Jitter ngẫu nhiên trong ô tile để tránh grid cứng nhắc")]
+    [Tooltip("Jitter vị trí ngẫu nhiên trong ô tile\nGợi ý: 0.1 – 0.3")]
     public float positionJitter = 0.2f;
 
     [Header("Scale Variation")]
@@ -53,142 +60,157 @@ public class SpawnableObjectConfig : ScriptableObject
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  WorldGenerator — Infinite world with chunk streaming
+//  BiomeTileSet — tự động load từ Assets/Tiles/32x_Tiles/[folder]
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[System.Serializable]
+public class BiomeTileSet
+{
+    [Tooltip("Tên folder trong Assets/Tiles/32x_Tiles/ — dùng để phân biệt biome\n" +
+             "Ví dụ: 'grass', 'water', 'stone', 'path'")]
+    public string folderName;
+
+    [Tooltip("Tile được chọn ngẫu nhiên từ folder này khi noise khớp")]
+    [HideInInspector] public TileBase[] tiles;   // auto-loaded
+
+    [Tooltip("Ngưỡng noise tối thiểu để dùng tileset này")]
+    [Range(0f, 1f)] public float noiseMin = 0f;
+
+    [Tooltip("Ngưỡng noise tối đa để dùng tileset này")]
+    [Range(0f, 1f)] public float noiseMax = 1f;
+
+    [Tooltip("Cell Height cho Rule Tile (set trong Inspector của từng Rule Tile asset)\n" +
+             "Gợi ý: grass/dirt/sand/stone = 0.5 | water = 0.16 (flat)")]
+    public float cellHeight = 0.5f;
+
+    public bool IsValid() => tiles != null && tiles.Length > 0;
+
+    public TileBase GetRandomTile() =>
+        IsValid() ? tiles[Random.Range(0, tiles.Length)] : null;
+
+    // Tile đại diện cho biome này (tile đầu tiên) — dùng để check allowedTiles
+    public TileBase PrimaryTile => IsValid() ? tiles[0] : null;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  WorldGenerator
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 public class WorldGenerator : MonoBehaviour
 {
-    // ── Seed ────────────────────────────────────────────────────────────
+    // ── Seed ────────────────────────────────────────────────
     [Header("=== SEED ===")]
     public int  seed               = 12345;
     public bool randomSeedEachTime = true;
 
-    // ── Noise Settings ──────────────────────────────────────────────────
+    // ── Noise ───────────────────────────────────────────────
     [Header("=== NOISE SETTINGS ===")]
-
-    [Tooltip("Tần số noise. Nhỏ = địa hình rộng, mượt | Lớn = địa hình vụn, nhỏ\n" +
-             "Gợi ý: 0.03 – 0.06")]
+    [Tooltip("Tần số noise biome. Nhỏ = địa hình rộng | Lớn = vụn nhỏ\nGợi ý: 0.03 – 0.06")]
     public float noiseScale = 0.04f;
 
-    [Tooltip("Số lớp Perlin noise chồng nhau (FBM)\n" +
-             "Nhiều lớp = chi tiết hơn nhưng chậm hơn\n" +
-             "Gợi ý: 4 – 7")]
+    [Tooltip("Tần số noise detail (micro variation)\nGợi ý: 0.15 – 0.30")]
+    public float detailScale = 0.20f;
+
+    [Tooltip("Mức ảnh hưởng của detail noise. 0 = tắt\nGợi ý: 0.10 – 0.20")]
+    [Range(0f, 0.5f)]
+    public float detailStrength = 0.15f;
+
+    [Tooltip("Số lớp FBM octave. Nhiều = chi tiết hơn\nGợi ý: 4 – 7")]
     public int octaves = 6;
 
-    [Tooltip("Biên độ giảm dần giữa các octave\n" +
-             "Thấp (0.3) = mượt, ít chi tiết | Cao (0.7) = gồ ghề, nhiều chi tiết\n" +
-             "Gợi ý: 0.4 – 0.6")]
     [Range(0f, 1f)]
+    [Tooltip("Biên độ giảm giữa octave\nGợi ý: 0.4 – 0.6")]
     public float persistence = 0.5f;
 
-    [Tooltip("Tần số tăng giữa các octave\n" +
-             "Gợi ý: 1.8 – 2.2")]
+    [Tooltip("Tần số tăng giữa octave\nGợi ý: 1.8 – 2.2")]
     public float lacunarity = 2.0f;
 
-    [Tooltip("Biến đổi phân phối noise bằng power curve\n" +
-             "< 1.0 = nhiều đất hơn (flat) | > 1.0 = nhiều nước hơn (mountainous)\n" +
-             "Gợi ý: 0.8 – 1.2 cho infinite world không dùng falloff")]
     [Range(0.3f, 2.5f)]
+    [Tooltip("Power curve: < 1 = nhiều đất | > 1 = nhiều nước\nGợi ý: 0.8 – 1.2")]
     public float redistributionPower = 1.0f;
 
-    // ── Noise Preview ───────────────────────────────────────────────────
+    // ── Noise Preview ───────────────────────────────────────
     [Header("=== NOISE PREVIEW (Editor only) ===")]
-    [Tooltip("Bật để vẽ noise map màu trong Inspector\nClick 'Bake Preview' để cập nhật")]
-    public bool showNoisePreview = true;
+    public bool showNoisePreview  = true;
+    [Range(32, 256)] public int previewResolution = 128;
+    [HideInInspector] public Texture2D noisePreviewTexture;
 
-    [Tooltip("Kích thước ảnh preview. Lớn hơn = rõ hơn nhưng chậm hơn\nGợi ý: 128")]
-    [Range(32, 256)]
-    public int previewResolution = 128;
-
-    [HideInInspector]
-    public Texture2D noisePreviewTexture;
-
-    // ── Chunk System ────────────────────────────────────────────────────
-    [Header("=== CHUNK SYSTEM (Infinite World) ===")]
-
-    [Tooltip("Số ô tile mỗi cạnh chunk\nNhỏ = load/unload mượt hơn | Lớn = ít overhead hơn\nGợi ý: 16 – 32")]
-    public int chunkSize = 16;
-
-    [Tooltip("Số chunk render xung quanh camera (theo mỗi hướng)\n" +
-             "View radius = viewDistance * chunkSize * cellSize\n" +
-             "Gợi ý: 3 – 5 (balance giữa view range và RAM)")]
-    public int viewDistance = 4;
-
-    [Tooltip("Khoảng cách để unload chunk (nên lớn hơn viewDistance 1-2)\n" +
-             "Lớn hơn = ít pop-in khi camera quay lại | Nhỏ hơn = tiết kiệm RAM hơn")]
+    // ── Chunk ───────────────────────────────────────────────
+    [Header("=== CHUNK SYSTEM ===")]
+    [Tooltip("Số tile mỗi cạnh chunk\nGợi ý: 16 – 32")]
+    public int chunkSize     = 16;
+    [Tooltip("Số chunk render mỗi hướng quanh camera\nGợi ý: 3 – 5")]
+    public int viewDistance  = 4;
+    [Tooltip("Khoảng cách unload (> viewDistance + 1)")]
     public int unloadDistance = 6;
-
-    [Tooltip("Bao nhiêu chunk được load mỗi frame để tránh lag spike\nGợi ý: 1 – 3")]
+    [Tooltip("Chunk load mỗi frame\nGợi ý: 1 – 3")]
     public int chunksPerFrame = 2;
 
-    // ── Tilemap ─────────────────────────────────────────────────────────
+    // ── Tilemap ─────────────────────────────────────────────
     [Header("=== TILEMAP ===")]
-    [Tooltip("Chỉ dùng 1 Tilemap duy nhất cho tất cả tile\n" +
-             "Rule Tile tự chọn sprite đúng khi biết neighbors\n\n" +
-             "⚠ SETUP QUAN TRỌNG:\n" +
-             "• Tilemap Renderer → Mode: Individual (KHÔNG phải Chunk)\n" +
-             "• Tilemap Renderer → Order in Layer: 0\n" +
-             "• Grid → Cell Size: X=1, Y=0.5, Z=1\n" +
-             "• Grid → Cell Layout: Isometric Z As Y")]
+    [Tooltip("Chỉ cần 1 Tilemap duy nhất.\n" +
+             "⚠ Tilemap Renderer → Mode: Individual\n" +
+             "⚠ Grid → Cell Size: X=1, Y=0.5, Z=1\n" +
+             "⚠ Grid → Cell Layout: Isometric Z As Y")]
     public Tilemap groundLayer;
+    public Tilemap midLayer;
+    public Tilemap highLayer;
 
-    // ── Tiles ───────────────────────────────────────────────────────────
-    [Header("=== TILES ===")]
-    [Tooltip("SETUP GỢI Ý cho mỗi Isometric Rule Tile:\n\n" +
-             "SPRITE IMPORT SETTINGS:\n" +
-             "• Pixels Per Unit: 68 (= pixel width của tile)\n" +
-             "• Pivot: Custom  X=0.5  Y=0.34\n" +
-             "  (Y=0.34 = bottom của diamond face, không phải center)\n" +
-             "• Filter Mode: Point (no filter) — giữ pixel art sắc nét\n" +
+    // ── Tile Folders ────────────────────────────────────────
+    [Header("=== TILE FOLDERS ===")]
+    [Tooltip("Auto-load tiles từ Assets/Tiles/32x_Tiles/[folderName]/\n" +
+             "Mỗi BiomeTileSet = 1 sub-folder = 1 biome\n\n" +
+             "Ví dụ setup:\n" +
+             "  folderName: water   | noiseMin: 0.00 | noiseMax: 0.28\n" +
+             "  folderName: path    | noiseMin: 0.28 | noiseMax: 0.34  (sand/bờ)\n" +
+             "  folderName: brush   | noiseMin: 0.34 | noiseMax: 0.50  (dirt)\n" +
+             "  folderName: grass   | noiseMin: 0.50 | noiseMax: 0.82\n" +
+             "  folderName: stone   | noiseMin: 0.82 | noiseMax: 1.00\n\n" +
+             "⚠ SPRITE SETUP (quan trọng):\n" +
+             "• PPU = pixel width của tile (vd: 32 hoặc 68)\n" +
+             "• Pivot: Custom X=0.5, Y=0.34\n" +
+             "• Filter: Point (no filter)\n" +
              "• Compression: None\n\n" +
-             "RULE TILE SETTINGS:\n" +
-             "• Tile Type: Isometric Rule Tile\n" +
-             "• Cell Height per tile:\n" +
-             "  - grass_tile  → 0.5\n" +
-             "  - dirt_tile   → 0.5\n" +
-             "  - sand_tile   → 0.5\n" +
-             "  - stone_tile  → 0.5\n" +
-             "  - water_tile  → 0.16  (flat, không có cạnh bên cao)\n\n" +
-             "CẦN THIẾT:\n" +
-             "• Phải setup đủ Tiling Rules trong Rule Tile\n" +
-             "• Neighbor = This / Not This cho 8 hướng\n" +
-             "• Có sprite riêng cho: top-face, NW edge, NE edge, SE edge, SW edge,\n" +
-             "  NW corner, NE corner, SE corner, SW corner, inner corners")]
-    public TileBase tileWater;
-    public TileBase tileSand;
-    public TileBase tileDirt;
-    public TileBase tileGrass;
-    public TileBase tileStone;
+             "⚠ RULE TILE SETUP:\n" +
+             "• Cell Height: 0.5 cho tile có cạnh bên\n" +
+             "• Cell Height: 0.16 cho water (flat)\n" +
+             "• Phải setup đủ Tiling Rules 8 hướng")]
+    public List<BiomeTileSet> biomeTileSets = new List<BiomeTileSet>();
 
-    // ── Tile Thresholds ─────────────────────────────────────────────────
-    [Header("=== TILE THRESHOLDS (0 → 1, sau normalize) ===")]
-    [Tooltip("Noise dưới ngưỡng này = Water\nGợi ý: 0.25 – 0.32")]
-    [Range(0f, 1f)] public float waterThreshold = 0.28f;
+    [Tooltip("Tile mid-level (đồi/cliff). Dùng Rule Tile có cạnh bên.")]
+    public TileBase tileMidLevel;
+    [Range(0f, 1f)] public float midLevelThreshold  = 0.58f;
 
-    [Tooltip("Noise dưới ngưỡng này = Sand\nNên cách waterThreshold ~0.04 – 0.07\nGợi ý: 0.32 – 0.37")]
-    [Range(0f, 1f)] public float sandThreshold  = 0.34f;
+    [Tooltip("Tile high-level (đỉnh núi/snow). Dùng Rule Tile.")]
+    public TileBase tileHighLevel;
+    [Range(0f, 1f)] public float highLevelThreshold = 0.80f;
 
-    [Tooltip("Noise dưới ngưỡng này = Dirt\nGợi ý: 0.44 – 0.52")]
-    [Range(0f, 1f)] public float dirtThreshold  = 0.48f;
+    // ── Object Folders ──────────────────────────────────────
+    [Header("=== OBJECT FOLDERS ===")]
+    [Tooltip("Auto-load SpawnableObjectConfig từ Assets/Prefabs/WorldObjects/[sub-folder]/\n" +
+             "Mỗi sub-folder = 1 nhóm object (rocks, treelogs, flowers...)\n" +
+             "Chỉ load các .asset được tạo từ Create → WorldGen → Spawnable Object")]
+    public string worldObjectsRootPath = "Prefabs/WorldObjects";
 
-    [Tooltip("Noise dưới ngưỡng này = Grass (phần lớn map)\nGợi ý: 0.78 – 0.88")]
-    [Range(0f, 1f)] public float grassThreshold = 0.82f;
-    // Còn lại = Stone
+    [Tooltip("Bật để log số config đã load lúc Start")]
+    public bool logLoadedConfigs = true;
 
-    // ── Object Spawning ─────────────────────────────────────────────────
-    [Header("=== OBJECT SPAWNING ===")]
-    public List<SpawnableObjectConfig> spawnableObjects;
     public Transform objectsParent;
 
-    // ── Runtime ─────────────────────────────────────────────────────────
-    private float  offsetX, offsetY;
+    // ── Runtime ─────────────────────────────────────────────
+    [HideInInspector] public List<SpawnableObjectConfig> spawnableObjects = new List<SpawnableObjectConfig>();
+
+    private float  offsetX, offsetY, offsetDetail, offsetHeight;
     private Grid   grid;
     private Camera mainCam;
 
-    private HashSet<Vector2Int>                      loadedChunks  = new HashSet<Vector2Int>();
-    private Queue<Vector2Int>                        chunkLoadQueue = new Queue<Vector2Int>();
-    private Dictionary<Vector2Int, List<GameObject>> chunkObjects  = new Dictionary<Vector2Int, List<GameObject>>();
+    private HashSet<Vector2Int>                      loadedChunks   = new HashSet<Vector2Int>();
+    private HashSet<Vector2Int>                      queuedChunks   = new HashSet<Vector2Int>();
+    private Queue<Vector2Int>                        chunkLoadQueue  = new Queue<Vector2Int>();
+    private Dictionary<Vector2Int, List<GameObject>> chunkObjects    = new Dictionary<Vector2Int, List<GameObject>>();
 
-    public  List<WorldObjectData> spawnedObjects = new List<WorldObjectData>();
+    // tile lookup: noise → tile (built from biomeTileSets)
+    private List<BiomeTileSet> sortedBiomes = new List<BiomeTileSet>();
+
+    public List<WorldObjectData> spawnedObjects = new List<WorldObjectData>();
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     void Start()
@@ -196,21 +218,83 @@ public class WorldGenerator : MonoBehaviour
         grid    = GetComponentInParent<Grid>() ?? FindFirstObjectByType<Grid>();
         mainCam = Camera.main;
 
-        if (randomSeedEachTime) seed = Random.Range(0, 1000000);
+        if (randomSeedEachTime) seed = Random.Range(0, 1_000_000);
         Random.InitState(seed);
-        offsetX = Random.Range(0f, 10000f);
-        offsetY = Random.Range(0f, 10000f);
+        offsetX      = Random.Range(0f, 10000f);
+        offsetY      = Random.Range(0f, 10000f);
+        offsetDetail = Random.Range(0f, 10000f);
+        offsetHeight = Random.Range(0f, 10000f);
 
         if (objectsParent == null)
             objectsParent = new GameObject("WorldObjects").transform;
 
-        // Isometric sorting fix
         mainCam.transparencySortMode = TransparencySortMode.CustomAxis;
         mainCam.transparencySortAxis = new Vector3(0f, 1f, 0f);
 
-        Debug.Log($"🌍 World seed: {seed}");
+        // Auto-load tiles từ folders
+        LoadTileSetsFromFolders();
+
+        // Auto-load SpawnableObjectConfig từ folders
+        LoadSpawnableObjectsFromFolders();
+
+        Debug.Log($"🌍 Seed: {seed} | Biomes: {sortedBiomes.Count} | SpawnConfigs: {spawnableObjects.Count}");
 
         StartCoroutine(ChunkStreamingLoop());
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  AUTO-LOAD: TILES
+    //  Đọc từ Assets/Tiles/32x_Tiles/[folderName]/
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private void LoadTileSetsFromFolders()
+    {
+        sortedBiomes.Clear();
+
+        foreach (var biome in biomeTileSets)
+        {
+            if (string.IsNullOrEmpty(biome.folderName)) continue;
+
+            string path = $"Tiles/32x_Tiles/{biome.folderName}";
+            var loaded  = Resources.LoadAll<TileBase>(path);
+
+            if (loaded.Length == 0)
+            {
+                Debug.LogWarning($"⚠ BiomeTileSet '{biome.folderName}': không tìm thấy tile nào tại Resources/{path}\n" +
+                                 $"  Đảm bảo folder nằm trong Assets/Resources/Tiles/32x_Tiles/{biome.folderName}/");
+                continue;
+            }
+
+            biome.tiles = loaded;
+            sortedBiomes.Add(biome);
+
+            if (logLoadedConfigs)
+                Debug.Log($"🗿 Biome '{biome.folderName}': {loaded.Length} tile(s) loaded | noise [{biome.noiseMin:F2} – {biome.noiseMax:F2}]");
+        }
+
+        // Sort theo noiseMin để lookup nhanh
+        sortedBiomes.Sort((a, b) => a.noiseMin.CompareTo(b.noiseMin));
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  AUTO-LOAD: SPAWNABLE OBJECTS
+    //  Đọc từ Assets/Resources/Prefabs/WorldObjects/[subfolder]/
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private void LoadSpawnableObjectsFromFolders()
+    {
+        spawnableObjects.Clear();
+
+        // Resources.LoadAll tự đệ quy sub-folder
+        string path    = worldObjectsRootPath;
+        var    configs = Resources.LoadAll<SpawnableObjectConfig>(path);
+
+        foreach (var cfg in configs)
+        {
+            if (cfg == null || cfg.prefab == null) continue;
+            spawnableObjects.Add(cfg);
+        }
+
+        if (logLoadedConfigs)
+            Debug.Log($"🌲 SpawnableObjects loaded: {spawnableObjects.Count} configs từ Resources/{path}");
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -220,24 +304,26 @@ public class WorldGenerator : MonoBehaviour
     {
         while (true)
         {
-            Vector2Int camChunk = WorldPosToChunk(mainCam.transform.position);
+            Vector2Int cam = WorldPosToChunk(mainCam.transform.position);
 
-            // Enqueue chunks cần load (gần trước)
             for (int r = 0; r <= viewDistance; r++)
             for (int dx = -r; dx <= r; dx++)
             for (int dy = -r; dy <= r; dy++)
             {
-                if (Mathf.Abs(dx) != r && Mathf.Abs(dy) != r) continue; // chỉ vòng ngoài
-                var c = new Vector2Int(camChunk.x + dx, camChunk.y + dy);
-                if (!loadedChunks.Contains(c) && !chunkLoadQueue.Contains(c))
+                if (Mathf.Abs(dx) != r && Mathf.Abs(dy) != r) continue;
+                var c = new Vector2Int(cam.x + dx, cam.y + dy);
+                if (!loadedChunks.Contains(c) && !queuedChunks.Contains(c))
+                {
                     chunkLoadQueue.Enqueue(c);
+                    queuedChunks.Add(c);
+                }
             }
 
-            // Load chunksPerFrame chunk mỗi frame
             int loaded = 0;
             while (chunkLoadQueue.Count > 0 && loaded < chunksPerFrame)
             {
                 var coord = chunkLoadQueue.Dequeue();
+                queuedChunks.Remove(coord);
                 if (!loadedChunks.Contains(coord))
                 {
                     yield return StartCoroutine(LoadChunk(coord));
@@ -245,83 +331,93 @@ public class WorldGenerator : MonoBehaviour
                 }
             }
 
-            // Unload distant chunks
-            UnloadDistantChunks(camChunk);
-
+            UnloadDistantChunks(cam);
             yield return new WaitForSeconds(0.2f);
         }
     }
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  LOAD CHUNK
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     private IEnumerator LoadChunk(Vector2Int coord)
     {
         loadedChunks.Add(coord);
 
-        // --- Tính noise & set tiles ---
-        int total = chunkSize * chunkSize;
-        var positions = new Vector3Int[total];
-        var tiles     = new TileBase[total];
-
-        // Pass 1: raw noise
-        var rawNoise = new float[total];
-        float min = float.MaxValue, max = float.MinValue;
+        int   total     = chunkSize * chunkSize;
+        var   positions = new Vector3Int[total];
+        var   tiles     = new TileBase[total];
+        var   midPos    = new List<Vector3Int>();
+        var   midTiles  = new List<TileBase>();
+        var   highPos   = new List<Vector3Int>();
+        var   highTiles = new List<TileBase>();
 
         for (int ly = 0; ly < chunkSize; ly++)
         for (int lx = 0; lx < chunkSize; lx++)
         {
-            int   wx = coord.x * chunkSize + lx;
-            int   wy = coord.y * chunkSize + ly;
-            float v  = RawNoise(wx, wy);
-            rawNoise[ly * chunkSize + lx] = v;
-            if (v < min) min = v;
-            if (v > max) max = v;
-        }
+            int wx  = coord.x * chunkSize + lx;
+            int wy  = coord.y * chunkSize + ly;
+            int idx = ly * chunkSize + lx;
 
-        // Pass 2: normalize + assign tiles (Y từ cao → thấp cho Rule Tile)
-        int idx = 0;
-        for (int ly = chunkSize - 1; ly >= 0; ly--)
-        for (int lx = 0; lx < chunkSize; lx++)
-        {
-            int   wx    = coord.x * chunkSize + lx;
-            int   wy    = coord.y * chunkSize + ly;
-            float noise = Mathf.InverseLerp(min, max, rawNoise[ly * chunkSize + lx]);
+            float biome  = SampleNoise(wx, wy, noiseScale,  offsetX,      offsetY);
+            float detail = SampleNoise(wx, wy, detailScale, offsetDetail, offsetDetail * 0.7f);
+            float final  = Mathf.Clamp01(biome + (detail - 0.5f) * detailStrength);
+            final        = Mathf.Clamp01(Mathf.Pow(final, redistributionPower));
+
+            float height = SampleNoise(wx, wy, noiseScale * 1.5f, offsetHeight, offsetHeight * 1.3f);
 
             positions[idx] = new Vector3Int(wx, wy, 0);
-            tiles[idx]     = GetTileFromNoise(noise);
-            idx++;
+            tiles[idx]     = GetTileFromNoise(final);
+
+            bool isLand = tiles[idx] != GetBiomeTile(0f); // bất kỳ tile nào không phải water
+            if (isLand)
+            {
+                if (tileMidLevel  != null && height > midLevelThreshold)  { midPos.Add(positions[idx]);  midTiles.Add(tileMidLevel); }
+                if (tileHighLevel != null && height > highLevelThreshold) { highPos.Add(positions[idx]); highTiles.Add(tileHighLevel); }
+            }
         }
 
         groundLayer.SetTiles(positions, tiles);
+        if (midLayer  != null && midPos.Count  > 0) midLayer .SetTiles(midPos.ToArray(),  midTiles.ToArray());
+        if (highLayer != null && highPos.Count > 0) highLayer.SetTiles(highPos.ToArray(), highTiles.ToArray());
 
-        // Chờ 2 frame để Rule Tile tính neighbors
         yield return null;
         yield return null;
-        foreach (var p in positions) groundLayer.RefreshTile(p);
 
-        // Spawn objects
+        foreach (var p in positions)
+        {
+            groundLayer.RefreshTile(p);
+            if (midLayer  != null) midLayer .RefreshTile(p);
+            if (highLayer != null) highLayer.RefreshTile(p);
+        }
+
         SpawnChunkObjects(coord, positions, tiles);
     }
 
-    private void UnloadDistantChunks(Vector2Int camChunk)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  UNLOAD
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private void UnloadDistantChunks(Vector2Int cam)
     {
         var toRemove = new List<Vector2Int>();
         foreach (var c in loadedChunks)
-        {
-            if (ChebychevDist(c, camChunk) > unloadDistance)
-                toRemove.Add(c);
-        }
+            if (ChebychevDist(c, cam) > unloadDistance) toRemove.Add(c);
 
         foreach (var c in toRemove)
         {
             for (int lx = 0; lx < chunkSize; lx++)
             for (int ly = 0; ly < chunkSize; ly++)
-                groundLayer.SetTile(new Vector3Int(c.x * chunkSize + lx, c.y * chunkSize + ly, 0), null);
+            {
+                var cell = new Vector3Int(c.x * chunkSize + lx, c.y * chunkSize + ly, 0);
+                groundLayer.SetTile(cell, null);
+                if (midLayer  != null) midLayer .SetTile(cell, null);
+                if (highLayer != null) highLayer.SetTile(cell, null);
+            }
 
             if (chunkObjects.TryGetValue(c, out var objs))
             {
                 foreach (var o in objs) if (o) Destroy(o);
                 chunkObjects.Remove(c);
             }
-
             loadedChunks.Remove(c);
         }
     }
@@ -340,7 +436,10 @@ public class WorldGenerator : MonoBehaviour
             foreach (var cfg in spawnableObjects)
             {
                 if (cfg == null || cfg.prefab == null) continue;
-                if (!IsTileAllowed(tiles[i], cfg.allowedTiles)) continue;
+
+                // allowedTiles trống = spawn mọi tile đất liền
+                if (cfg.allowedTiles != null && cfg.allowedTiles.Length > 0)
+                    if (!IsTileAllowed(tiles[i], cfg.allowedTiles)) continue;
 
                 if (cfg.useClusterNoise)
                 {
@@ -362,8 +461,8 @@ public class WorldGenerator : MonoBehaviour
 
     private WorldObjectData SpawnSingleObject(SpawnableObjectConfig cfg, Vector3Int cellPos)
     {
-        Vector3 center  = groundLayer.GetCellCenterWorld(cellPos);
-        float   j       = cfg.positionJitter;
+        Vector3 center   = groundLayer.GetCellCenterWorld(cellPos);
+        float   j        = cfg.positionJitter;
         Vector3 worldPos = new Vector3(
             center.x + Random.Range(-j, j),
             center.y + cfg.yOffset + Random.Range(-j * 0.5f, j * 0.5f), 0f);
@@ -372,9 +471,11 @@ public class WorldGenerator : MonoBehaviour
         obj.transform.localScale *= Random.Range(cfg.minScale, cfg.maxScale);
         obj.name = $"{cfg.objectName}_{cellPos.x}_{cellPos.y}";
 
-        // Isometric sort order
         foreach (var sr in obj.GetComponentsInChildren<SpriteRenderer>())
-            sr.sortingOrder += Mathf.RoundToInt(-worldPos.y * 10f);
+        {
+            sr.sortingLayerName = "GroundObjects";
+            sr.sortingOrder     = Mathf.RoundToInt(-worldPos.y * 100f) + 50;
+        }
 
         return new WorldObjectData
         {
@@ -387,72 +488,119 @@ public class WorldGenerator : MonoBehaviour
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  NOISE
+    //  TILE LOOKUP
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    private float RawNoise(int x, int y)
-    {
-        float v = 0f, amp = 1f, freq = noiseScale, maxAmp = 0f;
-        for (int i = 0; i < octaves; i++)
-        {
-            v      += Mathf.PerlinNoise((x + offsetX) * freq, (y + offsetY) * freq) * amp;
-            maxAmp += amp;
-            amp    *= persistence;
-            freq   *= lacunarity;
-        }
-        return Mathf.Pow(Mathf.Clamp01(v / maxAmp), redistributionPower);
-    }
-
     private TileBase GetTileFromNoise(float n)
     {
-        if (n < waterThreshold)  return tileWater;
-        if (n < sandThreshold)   return tileSand;
-        if (n < dirtThreshold)   return tileDirt;
-        if (n < grassThreshold)  return tileGrass;
-        return tileStone;
+        // Tìm biome phù hợp nhất (sorted by noiseMin)
+        BiomeTileSet best = null;
+        foreach (var b in sortedBiomes)
+        {
+            if (n >= b.noiseMin && n < b.noiseMax && b.IsValid())
+                best = b;
+        }
+        return best != null ? best.GetRandomTile() : null;
     }
 
+    private TileBase GetBiomeTile(float n)  => GetTileFromNoise(n);
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  NOISE PREVIEW — gọi từ WorldGeneratorEditor
+    //  NOISE PREVIEW
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     public void BakeNoisePreview()
     {
+        float ox = 1234f, oy = 5678f, od = 3456f;
         int   res  = previewResolution;
         float half = res * 0.5f;
-        var   raw  = new float[res * res];
-        float min  = float.MaxValue, max = float.MinValue;
 
+        var tex = new Texture2D(res, res) { filterMode = FilterMode.Bilinear };
         for (int y = 0; y < res; y++)
         for (int x = 0; x < res; x++)
         {
-            float v = RawNoise((int)(x - half), (int)(y - half));
-            raw[y * res + x] = v;
-            if (v < min) min = v;
-            if (v > max) max = v;
-        }
+            int   wx = (int)(x - half), wy = (int)(y - half);
+            float b  = SampleNoise(wx, wy, noiseScale, ox, oy);
+            float d  = SampleNoise(wx, wy, detailScale, od, od * 0.7f);
+            float n  = Mathf.Clamp01(Mathf.Pow(Mathf.Clamp01(b + (d - 0.5f) * detailStrength), redistributionPower));
 
-        var tex = new Texture2D(res, res) { filterMode = FilterMode.Point };
-        for (int y = 0; y < res; y++)
-        for (int x = 0; x < res; x++)
-        {
-            float n = Mathf.InverseLerp(min, max, raw[y * res + x]);
-            Color c =
-                n < waterThreshold  ? new Color(0.25f, 0.55f, 0.90f) :
-                n < sandThreshold   ? new Color(0.92f, 0.86f, 0.52f) :
-                n < dirtThreshold   ? new Color(0.58f, 0.38f, 0.20f) :
-                n < grassThreshold  ? new Color(0.28f, 0.68f, 0.28f) :
-                                      new Color(0.58f, 0.58f, 0.60f);
+            // Lấy màu từ biomeTileSets nếu có, fallback màu cứng
+            Color c = GetBiomePreviewColor(n);
             tex.SetPixel(x, y, c);
         }
         tex.Apply();
         noisePreviewTexture = tex;
     }
 
+    private Color GetBiomePreviewColor(float n)
+    {
+        // Màu fallback theo thứ tự phổ biến
+        Color[] fallback =
+        {
+            new Color(0.20f, 0.50f, 0.90f), // water
+            new Color(0.92f, 0.86f, 0.52f), // sand
+            new Color(0.58f, 0.38f, 0.20f), // dirt
+            new Color(0.28f, 0.68f, 0.28f), // grass
+            new Color(0.55f, 0.55f, 0.58f), // stone
+        };
+
+        // Dùng sortedBiomes nếu đã load
+        if (sortedBiomes != null && sortedBiomes.Count > 0)
+        {
+            for (int i = sortedBiomes.Count - 1; i >= 0; i--)
+            {
+                var b = sortedBiomes[i];
+                if (n >= b.noiseMin) return GetColorForBiome(b.folderName, i, fallback);
+            }
+        }
+
+        // Fallback
+        if (n < 0.28f) return fallback[0];
+        if (n < 0.34f) return fallback[1];
+        if (n < 0.48f) return fallback[2];
+        if (n < 0.82f) return fallback[3];
+        return fallback[4];
+    }
+
+    private Color GetColorForBiome(string name, int idx, Color[] fallback)
+    {
+        string n = name.ToLower();
+        if (n.Contains("water")) return fallback[0];
+        if (n.Contains("path") || n.Contains("sand")) return fallback[1];
+        if (n.Contains("brush") || n.Contains("dirt")) return fallback[2];
+        if (n.Contains("grass")) return fallback[3];
+        if (n.Contains("stone") || n.Contains("rock")) return fallback[4];
+        return idx < fallback.Length ? fallback[idx] : Color.magenta;
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  NOISE
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private float SampleNoise(int x, int y, float scale, float ox, float oy)
+    {
+        float v = 0f, amp = 1f, freq = scale, maxAmp = 0f;
+        for (int i = 0; i < octaves; i++)
+        {
+            v      += Mathf.PerlinNoise((x + ox) * freq, (y + oy) * freq) * amp;
+            maxAmp += amp;
+            amp    *= persistence;
+            freq   *= lacunarity;
+        }
+        return Mathf.Clamp01(v / maxAmp);
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  PUBLIC HELPERS
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     public TileBase GetTileAt(Vector3Int cellPos)  => groundLayer.GetTile(cellPos);
-    public bool     IsWalkable(Vector3Int cellPos) => GetTileAt(cellPos) != null
-                                                   && GetTileAt(cellPos) != tileWater;
+    public bool     IsWalkable(Vector3Int cellPos) =>
+        GetTileAt(cellPos) != null && !IsWaterTile(GetTileAt(cellPos));
+
+    private bool IsWaterTile(TileBase t)
+    {
+        if (sortedBiomes.Count == 0) return false;
+        // Biome đầu tiên (noiseMin thấp nhất) = water
+        var waterBiome = sortedBiomes[0];
+        return waterBiome.IsValid() && System.Array.IndexOf(waterBiome.tiles, t) >= 0;
+    }
 
     public void RefreshScreenPositions()
     {
@@ -473,7 +621,7 @@ public class WorldGenerator : MonoBehaviour
 
     private bool IsTileAllowed(TileBase tile, TileBase[] allowed)
     {
-        if (allowed == null) return false;
+        if (allowed == null || allowed.Length == 0) return true;
         foreach (var t in allowed) if (t == tile) return true;
         return false;
     }
@@ -483,7 +631,8 @@ public class WorldGenerator : MonoBehaviour
         if (spawnedObjects == null) return;
         foreach (var d in spawnedObjects)
         {
-            Gizmos.color = d.objectType.Contains("oak") ? Color.green : Color.gray;
+            Gizmos.color = d.objectType != null && d.objectType.ToLower().Contains("tree")
+                ? Color.green : Color.gray;
             Gizmos.DrawWireSphere(d.worldPosition, 0.15f);
         }
     }

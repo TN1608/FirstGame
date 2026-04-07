@@ -2,49 +2,31 @@ using UnityEngine;
 
 public class SimpleShadow : MonoBehaviour
 {
+    [Tooltip("Kéo child Shadow vào đây")]
     public Transform shadow;
 
     [Header("Offset & Stretch")]
     public Vector3 baseOffset = new Vector3(0, -0.28f, 0);
-    public float maxShadowStretch = 3.0f;
+    public float maxShadowStretch = 3.2f;
     public float minScaleY = 0.35f;
     public float maxScaleY = 1.6f;
-
-    private SpriteRenderer shadowRenderer;
-
-    void Awake()
-    {
-        shadowRenderer = shadow.GetComponent<SpriteRenderer>();
-
-        if (shadowRenderer == null)
-        {
-            Debug.LogError("Shadow child không có SpriteRenderer!");
-            return;
-        }
-
-        // Gán lại để chắc chắn
-        SpriteRenderer parent = GetComponent<SpriteRenderer>();
-        if (parent != null)
-            shadowRenderer.sprite = parent.sprite;
-
-        shadowRenderer.material = Resources.Load<Material>("ShadowMaterial"); // nếu không được thì comment dòng này
-        shadowRenderer.sortingLayerName = "WorldObjects";
-        shadowRenderer.sortingOrder = -10;
-        shadowRenderer.color = new Color(0, 0, 0, 0.58f);
-
-        Debug.Log($"Shadow của {gameObject.name} đã được setup thành công");
-    }
 
     void LateUpdate()
     {
         if (shadow == null || DayNightCycle.Instance == null) return;
 
         float sunAngle = DayNightCycle.Instance.GetSunAngle();
+
+        // Tính độ dài bóng theo góc mặt trời
         float stretch = Mathf.Lerp(1f, maxShadowStretch, Mathf.Abs(sunAngle - 55f) / 25f);
 
+        // Position bóng (dưới chân + kéo dài)
         shadow.position = transform.position + baseOffset * stretch;
-        shadow.localScale = new Vector3(1f, Mathf.Lerp(minScaleY, maxScaleY, Mathf.Abs(sunAngle - 55f) / 25f), 1f);
 
-        // Nếu bạn muốn giữ Rotation X = 45 thì KHÔNG rotate Z
+        // Scale Y để bóng dốc và dài hơn khi mặt trời thấp
+        float scaleY = Mathf.Lerp(minScaleY, maxScaleY, Mathf.Abs(sunAngle - 55f) / 25f);
+        shadow.localScale = new Vector3(1f, scaleY, 1f);
+
+        // KHÔNG rotate Z (vì bạn đã set Rotation X = 45 trong Prefab)
     }
 }
