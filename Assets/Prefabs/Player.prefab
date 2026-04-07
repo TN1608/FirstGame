@@ -32,7 +32,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.5, y: 0.5, z: 0.5}
+  m_LocalScale: {x: 0.35, y: 0.35, z: 0.35}
   m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 0}
@@ -60,7 +60,7 @@ SpriteRenderer:
   m_SmallMeshCulling: 1
   m_ForceMeshLod: -1
   m_MeshLodSelectionBias: 0
-  m_RenderingLayerMask: 1
+  m_RenderingLayerMask: 4294967295
   m_RendererPriority: 0
   m_Materials:
   - {fileID: 2100000, guid: a97c105638bdf8b4a8650670310a4cd3, type: 2}
@@ -82,8 +82,8 @@ SpriteRenderer:
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: -2085492563
-  m_SortingLayer: 0
+  m_SortingLayerID: -614932807
+  m_SortingLayer: 3
   m_SortingOrder: 15
   m_MaskInteraction: 0
   m_Sprite: {fileID: -2976837118148077081, guid: a556bf7b5dbcbf84288eeea49d9009d3, type: 3}
@@ -144,7 +144,7 @@ Rigidbody2D:
   m_Interpolate: 0
   m_SleepingMode: 1
   m_CollisionDetection: 0
-  m_Constraints: 0
+  m_Constraints: 4
 --- !u!61 &4746358517085900142
 BoxCollider2D:
   m_ObjectHideFlags: 0
@@ -179,7 +179,7 @@ BoxCollider2D:
   m_UsedByEffector: 0
   m_CompositeOperation: 0
   m_CompositeOrder: 0
-  m_Offset: {x: 0, y: 0.75}
+  m_Offset: {x: -0.03675227, y: 0.6703703}
   m_SpriteTilingProperty:
     border: {x: 0, y: 0, z: 0, w: 0}
     pivot: {x: 0.5, y: 0}
@@ -189,7 +189,7 @@ BoxCollider2D:
     drawMode: 0
     adaptiveTiling: 0
   m_AutoTiling: 0
-  m_Size: {x: 1, y: 1.5}
+  m_Size: {x: 0.865242, y: 1.1202277}
   m_EdgeRadius: 0
 --- !u!114 &2420773954625250798
 MonoBehaviour:
@@ -205,6 +205,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerMovement
   moveSpeed: 2.5
   stopDistance: 0.2
+  groundLayer: {fileID: 0}
+  waterLayer: {fileID: 0}
+  hoverIndicatorPrefab: {fileID: 0}
+  clickIndicatorPrefab: {fileID: 0}
+  grid: {fileID: 0}
 --- !u!114 &7830515133461013213
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -225,7 +230,7 @@ MonoBehaviour:
   m_CastsShadows: 1
   m_SelfShadows: 0
   m_AlphaCutoff: 0.1
-  m_ApplyToSortingLayers: 00000000
+  m_ApplyToSortingLayers: 00000000b5035c42b9de58dbdbdbc3bd
   m_ShapePath:
   - {x: -0.36400706, y: 0.047997594, z: 0}
   - {x: -0.4369815, y: 0.17326605, z: 0}
