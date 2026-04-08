@@ -4,7 +4,7 @@ using UnityEngine.Tilemaps;
 namespace _Scripts.WorldGen
 {
 
-[CreateAssetMenu(fileName = "SpawnableObject", menuName = "WorldGen/Spawnable Object")]
+[CreateAssetMenu(fileName = "SpawnableObjectConfig", menuName = "WorldGen/SpawnableObjectConfig")]
 public class SpawnableObjectConfig : ScriptableObject
 {
     public string objectName = "Object";

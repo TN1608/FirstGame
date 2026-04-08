@@ -1983,6 +1983,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1067607398215885750, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
       propertyPath: m_BodyType
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1067607398215885750, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
+      propertyPath: m_CollisionDetection
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 1067607398215885750, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
@@ -2034,13 +2038,21 @@ PrefabInstance:
       value: 
       objectReference: {fileID: 1850621051}
     - target: {fileID: 2420773954625250798, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
+      propertyPath: moveSpeed
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 2420773954625250798, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
       propertyPath: groundLayer
       value: 
       objectReference: {fileID: 1312411273}
     - target: {fileID: 2420773954625250798, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
+      propertyPath: stopDistance
+      value: 0.1
+      objectReference: {fileID: 0}
+    - target: {fileID: 2420773954625250798, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
       propertyPath: worldGenerator
       value: 
-      objectReference: {fileID: 1850621053}
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Tilemaps;
+using _Scripts.WorldGen;
 using ProceduralWorld.Generation;
 using ProceduralWorld.Data;
 
@@ -22,8 +23,6 @@ using ProceduralWorld.Data;
 ///   4. noiseConfig set
 ///   5. elevationYOffset set (0.5 recommended)
 /// </summary>
-namespace _Scripts.WorldGen
-{
 public class WorldGenerator : MonoBehaviour
 {
     // ═══════════════════════════════════════════════════════════
@@ -293,14 +292,13 @@ public class WorldGenerator : MonoBehaviour
                 int worldY = chunk.coord.y * chunkSize + cy;
                 float noiseValue = chunk.noiseValues[cy, cx];
                 int elevation = chunk.elevationLevels[cy, cx];
-                BiomeType biomeType = chunk.biomeMap[cy, cx];
 
                 // Get tilemap for this elevation
                 Tilemap targetLayer = GetLayerForElevation(elevation);
                 if (targetLayer == null) continue;
 
-                // Get tile for this biome
-                TileBase tile = GetTileForBiome(biomeType);
+                // Get tile for this noise value
+                TileBase tile = GetTileForNoise(noiseValue);
                 if (tile == null) continue;
 
                 // Place tile
@@ -321,14 +319,14 @@ public class WorldGenerator : MonoBehaviour
         };
     }
 
-    private TileBase GetTileForBiome(BiomeType biomeType)
+    private TileBase GetTileForNoise(float noiseValue)
     {
         // Find matching biome tileset
-        foreach (var biomeSet in biomeTileSets)
+        foreach (var biome in biomeTileSets)
         {
-            if (IsBiomeMatch(biomeSet, biomeType))
+            if (noiseValue >= biome.noiseMin && noiseValue <= biome.noiseMax)
             {
-                return biomeSet.GetRandomTile();
+                return biome.GetRandomTile();
             }
         }
 
@@ -478,8 +476,8 @@ public class WorldGenerator : MonoBehaviour
         return biome switch
         {
             BiomeType.Water => tileset.noiseMin < 0.20f,
-            BiomeType.Path => tileset.noiseMin >= 0.20f && tileset.noiseMin < 0.35f,
             BiomeType.Brush => tileset.noiseMin >= 0.35f && tileset.noiseMin < 0.55f,
+            BiomeType.Path  => tileset.noiseMin >= 0.20f && tileset.noiseMin < 0.35f,
             BiomeType.Grass => tileset.noiseMin >= 0.55f && tileset.noiseMin < 0.80f,
             BiomeType.Stone => tileset.noiseMin >= 0.80f,
             _ => false
@@ -580,4 +578,20 @@ public class WorldGenerator : MonoBehaviour
         return basePos.y + elevation * elevationYOffset;
     }
 }
+
+[System.Serializable]
+public class BiomeTileSet
+{
+    public string folderName;
+    public float noiseMin;
+    public float noiseMax;
+    public TileBase[] tiles;
+
+    public TileBase PrimaryTile => (tiles != null && tiles.Length > 0) ? tiles[0] : null;
+
+    public TileBase GetRandomTile()
+    {
+        if (tiles == null || tiles.Length == 0) return null;
+        return tiles[Random.Range(0, tiles.Length)];
+    }
 }

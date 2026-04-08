@@ -62,7 +62,7 @@ namespace ProceduralWorld.Data
                     chunk.noiseValues[cy, cx] = noiseValue;
 
                     // Determine biome
-                    chunk.biomeMap[cy, cx] = ImprovedNoiseGenerator.GetBiomeType(noiseValue);
+                    chunk.biomeMap[cy, cx] = ImprovedNoiseGenerator.GetBiomeType(noiseValue, worldX, worldY, seed);
 
                     // Determine elevation level (0=ground, 1=mid, 2=high)
                     chunk.elevationLevels[cy, cx] = ImprovedNoiseGenerator.GetElevationLevel(
@@ -82,8 +82,8 @@ namespace ProceduralWorld.Data
         /// </summary>
         public bool CanSpawnObject(
             int worldX, int worldY,
-            BiomeType actualBiome,
-            int actualElevationLevel,
+            BiomeType requiredBiome,
+            int requiredElevationLevel,
             float spawnChance,
             bool useClusterNoise = true,
             float clusterScale = 0.15f,
@@ -92,6 +92,22 @@ namespace ProceduralWorld.Data
             // Random spawn chance
             float spawnRoll = ImprovedNoiseGenerator.Hash(seed + 2, worldX, worldY);
             if (spawnRoll > spawnChance)
+                return false;
+
+            // Biome check
+            float noiseValue = ImprovedNoiseGenerator.GetTerrainNoise(
+                worldX, worldY,
+                noiseConfig,
+                seed,
+                noiseOffset
+            );
+            BiomeType biome = ImprovedNoiseGenerator.GetBiomeType(noiseValue, worldX, worldY, seed);
+            if (biome != requiredBiome)
+                return false;
+
+            // Elevation level check
+            int elevLevel = ImprovedNoiseGenerator.GetElevationLevel(noiseValue);
+            if (elevLevel != requiredElevationLevel)
                 return false;
 
             // Clustering check (objects group together)

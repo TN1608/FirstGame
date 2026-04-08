@@ -144,18 +144,29 @@ namespace ProceduralWorld.Generation
         /// <summary>
         /// Determine biome from noise value and thresholds
         /// </summary>
-        public static BiomeType GetBiomeType(float noiseValue)
+        public static BiomeType GetBiomeType(float noiseValue, int worldX, int worldY, int seed)
         {
-            // distribution:
-            // 0.0-0.2  = Water
-            // 0.2-0.35 = Path
-            // 0.35-0.55 = Brush
+            // Distribution:
+            // 0.0-0.20  = Water
+            // 0.20-0.35 = Path
+            // 0.35-0.55 = Brush (với điều kiện phụ để thưa thớt)
             // 0.55-0.80 = Grass
             // 0.80-1.0 = Stone
 
             if (noiseValue < 0.20f) return BiomeType.Water;
             if (noiseValue < 0.35f) return BiomeType.Path;
-            if (noiseValue < 0.55f) return BiomeType.Brush;
+            
+            if (noiseValue < 0.55f)
+            {
+                // Brush logic: lai rai (thưa thớt)
+                // Sử dụng hash noise phụ để kiểm tra xác suất
+                float brushDensity = Hash(seed + 999, worldX, worldY);
+                if (brushDensity < 0.3f) // Chỉ 30% vùng 0.35-0.55 là Brush
+                    return BiomeType.Brush;
+                else
+                    return BiomeType.Grass; // Nếu không là Brush thì cho thành Grass (hoặc Path tùy ý, nhưng Grass phổ biến hơn)
+            }
+            
             if (noiseValue < 0.80f) return BiomeType.Grass;
             return BiomeType.Stone;
         }
