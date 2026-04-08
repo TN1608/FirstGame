@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using _Scripts.WorldGen;
+using UnityEngine;
 using UnityEditor;
 
 [CustomEditor(typeof(WorldGenerator))]

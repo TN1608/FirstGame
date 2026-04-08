@@ -146,16 +146,16 @@ namespace ProceduralWorld.Generation
         /// </summary>
         public static BiomeType GetBiomeType(float noiseValue)
         {
-            // Example distribution:
+            // distribution:
             // 0.0-0.2  = Water
-            // 0.2-0.35 = Sand
-            // 0.35-0.55 = Dirt
+            // 0.2-0.35 = Path
+            // 0.35-0.55 = Brush
             // 0.55-0.80 = Grass
             // 0.80-1.0 = Stone
 
             if (noiseValue < 0.20f) return BiomeType.Water;
-            if (noiseValue < 0.35f) return BiomeType.Sand;
-            if (noiseValue < 0.55f) return BiomeType.Dirt;
+            if (noiseValue < 0.35f) return BiomeType.Path;
+            if (noiseValue < 0.55f) return BiomeType.Brush;
             if (noiseValue < 0.80f) return BiomeType.Grass;
             return BiomeType.Stone;
         }

@@ -4,8 +4,8 @@ using UnityEngine.Tilemaps;
 namespace _Scripts.WorldGen
 {
 
-[System.Serializable]
-public class SpawnableObjectConfig
+[CreateAssetMenu(fileName = "SpawnableObject", menuName = "WorldGen/Spawnable Object")]
+public class SpawnableObjectConfig : ScriptableObject
 {
     public string objectName = "Object";
     public GameObject prefab;

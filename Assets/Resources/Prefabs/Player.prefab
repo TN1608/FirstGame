@@ -84,7 +84,7 @@ SpriteRenderer:
   m_GlobalIlluminationMeshLod: 0
   m_SortingLayerID: -608764895
   m_SortingLayer: 4
-  m_SortingOrder: 15
+  m_SortingOrder: 5
   m_MaskInteraction: 0
   m_Sprite: {fileID: -2976837118148077081, guid: a556bf7b5dbcbf84288eeea49d9009d3, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
@@ -126,7 +126,7 @@ Rigidbody2D:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 943648227868954951}
-  m_BodyType: 1
+  m_BodyType: 0
   m_Simulated: 1
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
@@ -204,12 +204,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerMovement
   moveSpeed: 2.5
+  acceleration: 10
   stopDistance: 0.2
   groundLayer: {fileID: 0}
-  waterLayer: {fileID: 0}
   hoverIndicatorPrefab: {fileID: 0}
   clickIndicatorPrefab: {fileID: 0}
   grid: {fileID: 0}
+  animBlendSpeed: 10
 --- !u!1 &7980293087339208892
 GameObject:
   m_ObjectHideFlags: 0
