@@ -2,6 +2,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Tilemaps;
+using _Scripts.WorldGen;
+using ProceduralWorld.Generation;
+using ProceduralWorld.Data;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  WorldObjectData
@@ -103,29 +106,19 @@ public class WorldGenerator : MonoBehaviour
 
     // ── Noise ───────────────────────────────────────────────
     [Header("=== NOISE SETTINGS ===")]
-    [Tooltip("Tần số noise biome. Nhỏ = địa hình rộng | Lớn = vụn nhỏ\nGợi ý: 0.03 – 0.06")]
-    public float noiseScale = 0.04f;
+    [Tooltip("Cấu hình noise tập trung — dùng bởi ChunkDataGenerator & ImprovedNoiseGenerator")]
+    public NoiseConfig noiseConfig = new NoiseConfig
+    {
+        scale               = 0.04f,
+        octaves             = 6,
+        persistence         = 0.5f,
+        lacunarity          = 2.0f,
+        redistributionPower = 1.0f,
+        detailStrength      = 0.15f,
+    };
 
-    [Tooltip("Tần số noise detail (micro variation)\nGợi ý: 0.15 – 0.30")]
-    public float detailScale = 0.20f;
-
-    [Tooltip("Mức ảnh hưởng của detail noise. 0 = tắt\nGợi ý: 0.10 – 0.20")]
-    [Range(0f, 0.5f)]
-    public float detailStrength = 0.15f;
-
-    [Tooltip("Số lớp FBM octave. Nhiều = chi tiết hơn\nGợi ý: 4 – 7")]
-    public int octaves = 6;
-
-    [Range(0f, 1f)]
-    [Tooltip("Biên độ giảm giữa octave\nGợi ý: 0.4 – 0.6")]
-    public float persistence = 0.5f;
-
-    [Tooltip("Tần số tăng giữa octave\nGợi ý: 1.8 – 2.2")]
-    public float lacunarity = 2.0f;
-
-    [Range(0.3f, 2.5f)]
-    [Tooltip("Power curve: < 1 = nhiều đất | > 1 = nhiều nước\nGợi ý: 0.8 – 1.2")]
-    public float redistributionPower = 1.0f;
+    [Tooltip("AnimationCurve tạo bậc thang địa hình (terracing). Để None = tuyến tính.")]
+    public AnimationCurve heightCurve;
 
     // ── Noise Preview ───────────────────────────────────────
     [Header("=== NOISE PREVIEW (Editor only) ===")]
@@ -177,11 +170,11 @@ public class WorldGenerator : MonoBehaviour
 
     [Tooltip("Tile mid-level (đồi/cliff). Dùng Rule Tile có cạnh bên.")]
     public TileBase tileMidLevel;
-    [Range(0f, 1f)] public float midLevelThreshold  = 0.58f;
+    [HideInInspector] public float midLevelThreshold  = 0.58f;   // managed by ChunkDataGenerator (0.4)
 
     [Tooltip("Tile high-level (đỉnh núi/snow). Dùng Rule Tile.")]
     public TileBase tileHighLevel;
-    [Range(0f, 1f)] public float highLevelThreshold = 0.80f;
+    [HideInInspector] public float highLevelThreshold = 0.80f;   // managed by ChunkDataGenerator (0.7)
 
     // ── Object Folders ──────────────────────────────────────
     [Header("=== OBJECT FOLDERS ===")]
@@ -198,7 +191,7 @@ public class WorldGenerator : MonoBehaviour
     // ── Runtime ─────────────────────────────────────────────
     [HideInInspector] public List<SpawnableObjectConfig> spawnableObjects = new List<SpawnableObjectConfig>();
 
-    private float  offsetX, offsetY, offsetDetail, offsetHeight;
+    private ChunkDataGenerator chunkGen;
     private Grid   grid;
     private Camera mainCam;
 
@@ -219,11 +212,11 @@ public class WorldGenerator : MonoBehaviour
         mainCam = Camera.main;
 
         if (randomSeedEachTime) seed = Random.Range(0, 1_000_000);
-        Random.InitState(seed);
-        offsetX      = Random.Range(0f, 10000f);
-        offsetY      = Random.Range(0f, 10000f);
-        offsetDetail = Random.Range(0f, 10000f);
-        offsetHeight = Random.Range(0f, 10000f);
+
+        // Khởi tạo ChunkDataGenerator — dùng NoiseConfig + seed + heightCurve
+        if (heightCurve == null || heightCurve.length == 0)
+            heightCurve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+        chunkGen = new ChunkDataGenerator(noiseConfig, seed, heightCurve);
 
         if (objectsParent == null)
             objectsParent = new GameObject("WorldObjects").transform;
@@ -343,13 +336,18 @@ public class WorldGenerator : MonoBehaviour
     {
         loadedChunks.Add(coord);
 
-        int   total     = chunkSize * chunkSize;
-        var   positions = new Vector3Int[total];
-        var   tiles     = new TileBase[total];
-        var   midPos    = new List<Vector3Int>();
-        var   midTiles  = new List<TileBase>();
-        var   highPos   = new List<Vector3Int>();
-        var   highTiles = new List<TileBase>();
+        // ── 1. Generate data via ChunkDataGenerator ──────────
+        var chunkData = new ChunkData(coord, chunkSize);
+        chunkGen.GenerateChunkData(chunkData, chunkSize);
+
+        // ── 2. Build tile arrays từ ChunkData ────────────────
+        int total     = chunkSize * chunkSize;
+        var positions = new Vector3Int[total];
+        var tiles     = new TileBase[total];
+        var midPos    = new List<Vector3Int>();
+        var midTiles  = new List<TileBase>();
+        var highPos   = new List<Vector3Int>();
+        var highTiles = new List<TileBase>();
 
         for (int ly = 0; ly < chunkSize; ly++)
         for (int lx = 0; lx < chunkSize; lx++)
@@ -358,21 +356,17 @@ public class WorldGenerator : MonoBehaviour
             int wy  = coord.y * chunkSize + ly;
             int idx = ly * chunkSize + lx;
 
-            float biome  = SampleNoise(wx, wy, noiseScale,  offsetX,      offsetY);
-            float detail = SampleNoise(wx, wy, detailScale, offsetDetail, offsetDetail * 0.7f);
-            float final  = Mathf.Clamp01(biome + (detail - 0.5f) * detailStrength);
-            final        = Mathf.Clamp01(Mathf.Pow(final, redistributionPower));
-
-            float height = SampleNoise(wx, wy, noiseScale * 1.5f, offsetHeight, offsetHeight * 1.3f);
+            float     noise     = chunkData.noiseValues[ly, lx];
+            int       elevation = chunkData.elevationLevels[ly, lx];  // 0=ground,1=mid,2=high
+            BiomeType biome     = chunkData.biomeMap[ly, lx];
 
             positions[idx] = new Vector3Int(wx, wy, 0);
-            tiles[idx]     = GetTileFromNoise(final);
+            tiles[idx]     = GetTileFromNoise(noise);
 
-            bool isLand = tiles[idx] != GetBiomeTile(0f); // bất kỳ tile nào không phải water
-            if (isLand)
+            if (biome != BiomeType.Water)
             {
-                if (tileMidLevel  != null && height > midLevelThreshold)  { midPos.Add(positions[idx]);  midTiles.Add(tileMidLevel); }
-                if (tileHighLevel != null && height > highLevelThreshold) { highPos.Add(positions[idx]); highTiles.Add(tileHighLevel); }
+                if (tileMidLevel  != null && elevation >= 1) { midPos.Add(positions[idx]);  midTiles.Add(tileMidLevel); }
+                if (tileHighLevel != null && elevation >= 2) { highPos.Add(positions[idx]); highTiles.Add(tileHighLevel); }
             }
         }
 
@@ -429,27 +423,37 @@ public class WorldGenerator : MonoBehaviour
     {
         if (spawnableObjects == null || spawnableObjects.Count == 0) return;
 
+        // Lấy lại ChunkData đã generate — reconstruct từ coord
+        // (chunkData không lưu lại, tính nhanh lại biome từ noise)
         var list = new List<GameObject>();
         for (int i = 0; i < positions.Length; i++)
         {
             if (tiles[i] == null) continue;
+
+            int wx = positions[i].x;
+            int wy = positions[i].y;
+
+            // Lấy biome tại tile này từ ImprovedNoiseGenerator (deterministic, khớp ChunkDataGenerator)
+            // Dùng chunkGen.CanSpawnObject cho từng config
             foreach (var cfg in spawnableObjects)
             {
                 if (cfg == null || cfg.prefab == null) continue;
 
-                // allowedTiles trống = spawn mọi tile đất liền
                 if (cfg.allowedTiles != null && cfg.allowedTiles.Length > 0)
                     if (!IsTileAllowed(tiles[i], cfg.allowedTiles)) continue;
 
-                if (cfg.useClusterNoise)
-                {
-                    float cn = Mathf.PerlinNoise(
-                        (positions[i].x + offsetX * 0.3f) * cfg.clusterNoiseScale,
-                        (positions[i].y + offsetY * 0.3f) * cfg.clusterNoiseScale);
-                    if (cn < cfg.clusterThreshold) continue;
-                }
+                // Dùng ChunkDataGenerator.CanSpawnObject — deterministic, sync với noise pipeline
+                bool canSpawn = chunkGen.CanSpawnObject(
+                    wx, wy,
+                    BiomeType.Grass,        // allowedTiles đã lọc ở trên → pass Grass làm requiredBiome
+                    0,                      // elevation = 0 (bất kỳ ground)
+                    cfg.spawnChance,
+                    cfg.useClusterNoise,
+                    cfg.clusterNoiseScale,
+                    cfg.clusterThreshold
+                );
 
-                if (Random.value > cfg.spawnChance) continue;
+                if (!canSpawn) continue;
 
                 var data = SpawnSingleObject(cfg, positions[i]);
                 if (data != null) { list.Add(data.instance); spawnedObjects.Add(data); }
@@ -509,23 +513,34 @@ public class WorldGenerator : MonoBehaviour
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     public void BakeNoisePreview()
     {
-        float ox = 1234f, oy = 5678f, od = 3456f;
         int   res  = previewResolution;
         float half = res * 0.5f;
 
+        // Dùng chunkGen (hoặc tạo mới nếu chưa init trong editor)
+        if (chunkGen == null)
+        {
+            var curve = (heightCurve != null && heightCurve.length > 0)
+                ? heightCurve
+                : AnimationCurve.Linear(0f, 0f, 1f, 1f);
+            chunkGen = new ChunkDataGenerator(noiseConfig, seed, curve);
+        }
+
         var tex = new Texture2D(res, res) { filterMode = FilterMode.Bilinear };
+
         for (int y = 0; y < res; y++)
         for (int x = 0; x < res; x++)
         {
-            int   wx = (int)(x - half), wy = (int)(y - half);
-            float b  = SampleNoise(wx, wy, noiseScale, ox, oy);
-            float d  = SampleNoise(wx, wy, detailScale, od, od * 0.7f);
-            float n  = Mathf.Clamp01(Mathf.Pow(Mathf.Clamp01(b + (d - 0.5f) * detailStrength), redistributionPower));
+            int   wx = (int)(x - half);
+            int   wy = (int)(y - half);
 
-            // Lấy màu từ biomeTileSets nếu có, fallback màu cứng
-            Color c = GetBiomePreviewColor(n);
-            tex.SetPixel(x, y, c);
+            // Generate 1-tile ChunkData để lấy noise đúng pipeline
+            var c = new ChunkData(new Vector2Int(wx, wy), 1);
+            chunkGen.GenerateChunkData(c, 1);
+            float n = c.noiseValues[0, 0];
+
+            tex.SetPixel(x, y, GetBiomePreviewColor(n));
         }
+
         tex.Apply();
         noisePreviewTexture = tex;
     }
@@ -569,22 +584,6 @@ public class WorldGenerator : MonoBehaviour
         if (n.Contains("grass")) return fallback[3];
         if (n.Contains("stone") || n.Contains("rock")) return fallback[4];
         return idx < fallback.Length ? fallback[idx] : Color.magenta;
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  NOISE
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    private float SampleNoise(int x, int y, float scale, float ox, float oy)
-    {
-        float v = 0f, amp = 1f, freq = scale, maxAmp = 0f;
-        for (int i = 0; i < octaves; i++)
-        {
-            v      += Mathf.PerlinNoise((x + ox) * freq, (y + oy) * freq) * amp;
-            maxAmp += amp;
-            amp    *= persistence;
-            freq   *= lacunarity;
-        }
-        return Mathf.Clamp01(v / maxAmp);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
