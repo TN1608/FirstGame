@@ -1,100 +1,80 @@
 ﻿using _Scripts.WorldGen;
 using UnityEngine;
 using UnityEditor;
+using ProceduralWorld.Generation;
 
 [CustomEditor(typeof(WorldGenerator))]
 public class WorldGeneratorEditor : Editor
 {
+    private bool showBaseSettings = true;
+    private bool showMeshSettings = true;
+    private bool showNoiseSettings = true;
+
     public override void OnInspectorGUI()
     {
-        DrawDefaultInspector();
-
         var wg = (WorldGenerator)target;
+        
+        serializedObject.Update();
 
-        EditorGUILayout.Space(8);
+        // 1. Gán Config trước
+        EditorGUILayout.LabelField("Configuration", EditorStyles.boldLabel);
+        wg.config = (WorldGenerationConfig)EditorGUILayout.ObjectField("World Gen Config", wg.config, typeof(WorldGenerationConfig), false);
 
-        // ── Folder structure hint ──────────────────────────
-        EditorGUILayout.HelpBox(
-            "📁 CẤU TRÚC FOLDER CẦN THIẾT:\n\n" +
-            "Assets/Resources/\n" +
-            "  ├── Tiles/32x_Tiles/\n" +
-            "  │     ├── water/      ← tile assets (.asset)\n" +
-            "  │     ├── path/\n" +
-            "  │     ├── brush/\n" +
-            "  │     ├── grass/\n" +
-            "  │     └── stone/\n" +
-            "  └── Prefabs/WorldObjects/\n" +
-            "        ├── rocks/      ← SpawnableObjectConfig (.asset)\n" +
-            "        └── treelogs/",
-            MessageType.Info);
-
-        EditorGUILayout.Space(4);
-
-        // ── Noise Preview ──────────────────────────────────
-        if (wg.showNoisePreview)
+        if (wg.config == null)
         {
-            if (GUILayout.Button("🗺  Bake Noise Preview", GUILayout.Height(32)))
-            {
-                wg.BakeNoisePreview();
-                EditorUtility.SetDirty(wg);
-            }
-
-            if (wg.noisePreviewTexture != null)
-            {
-                EditorGUILayout.Space(4);
-                EditorGUILayout.LabelField("Noise Map Preview", EditorStyles.boldLabel);
-
-                Rect rect = GUILayoutUtility.GetRect(
-                    GUIContent.none, GUIStyle.none,
-                    GUILayout.ExpandWidth(true),
-                    GUILayout.Height(220));
-                EditorGUI.DrawPreviewTexture(rect, wg.noisePreviewTexture,
-                    null, ScaleMode.ScaleToFit);
-
-                EditorGUILayout.Space(4);
-                DrawLegend(wg);
-            }
+            EditorGUILayout.HelpBox("Hãy gán WorldGenerationConfig để bắt đầu.", MessageType.Warning);
+            serializedObject.ApplyModifiedProperties();
+            return;
         }
 
-        EditorGUILayout.Space(4);
+        EditorGUILayout.Space();
 
-        // ── Loaded configs status ──────────────────────────
-        if (wg.spawnableObjects != null && wg.spawnableObjects.Count > 0)
+        // 2. Base Settings (Sử dụng foldout thường thay vì HeaderGroup để tránh lỗi nesting nếu configEditor có header)
+        showBaseSettings = EditorGUILayout.Foldout(showBaseSettings, "Base World Settings", true);
+        if (showBaseSettings)
         {
-            EditorGUILayout.LabelField($"✅ SpawnableObjects loaded: {wg.spawnableObjects.Count}",
-                EditorStyles.boldLabel);
-            foreach (var cfg in wg.spawnableObjects)
-            {
-                if (cfg == null) continue;
-                EditorGUILayout.LabelField($"   • {cfg.objectName} (chance: {cfg.spawnChance:F2})",
-                    EditorStyles.miniLabel);
-            }
+            EditorGUI.indentLevel++;
+            wg.objectsParent = (Transform)EditorGUILayout.ObjectField("Objects Parent", wg.objectsParent, typeof(Transform), true);
+            wg.decorationLayer = (UnityEngine.Tilemaps.Tilemap)EditorGUILayout.ObjectField("Decoration Layer", wg.decorationLayer, typeof(UnityEngine.Tilemaps.Tilemap), true);
+            EditorGUI.indentLevel--;
         }
-        else
+
+        EditorGUILayout.Space();
+
+        // 3. Hiển thị nội dung Config (Không bọc trong Foldout Header Group)
+        EditorGUILayout.LabelField("Advanced Noise & Shaping Settings", EditorStyles.boldLabel);
+        Editor.CreateCachedEditor(wg.config, null, ref configEditor);
+        if (configEditor != null)
         {
-            EditorGUILayout.HelpBox(
-                "⚠ Chưa có SpawnableObjectConfig nào được load.\n" +
-                "Đảm bảo folder nằm trong Assets/Resources/Prefabs/WorldObjects/",
-                MessageType.Warning);
+            configEditor.OnInspectorGUI();
+        }
+
+        EditorGUILayout.Space();
+
+        // 4. Bake Button
+        if (GUILayout.Button("🗺 Bake Noise Preview", GUILayout.Height(32)))
+        {
+            wg.BakeNoisePreview();
+        }
+
+        if (WorldGenerator.LastBakePreview != null)
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Noise Preview Result:", EditorStyles.boldLabel);
+            Rect rect = GUILayoutUtility.GetRect(256, 256, GUILayout.ExpandWidth(false));
+            GUI.DrawTexture(rect, WorldGenerator.LastBakePreview);
+        }
+
+        EditorGUILayout.Space();
+        EditorGUILayout.HelpBox("Kiến trúc Hybrid: Địa hình (Mesh) + Trang trí (Tilemap).", MessageType.Info);
+
+        serializedObject.ApplyModifiedProperties();
+        if (GUI.changed)
+        {
+            EditorUtility.SetDirty(wg);
+            EditorUtility.SetDirty(wg.config);
         }
     }
 
-    private void DrawLegend(WorldGenerator wg)
-    {
-        EditorGUILayout.BeginHorizontal();
-        DrawBox(new Color(0.20f, 0.50f, 0.90f)); GUILayout.Label("Water",  GUILayout.Width(46));
-        DrawBox(new Color(0.92f, 0.86f, 0.52f)); GUILayout.Label("Sand",   GUILayout.Width(46));
-        DrawBox(new Color(0.58f, 0.38f, 0.20f)); GUILayout.Label("Dirt",   GUILayout.Width(46));
-        DrawBox(new Color(0.28f, 0.68f, 0.28f)); GUILayout.Label("Grass",  GUILayout.Width(46));
-        DrawBox(new Color(0.55f, 0.55f, 0.58f)); GUILayout.Label("Stone",  GUILayout.Width(46));
-        EditorGUILayout.EndHorizontal();
-    }
-
-    private void DrawBox(Color color)
-    {
-        var old = GUI.color;
-        GUI.color = color;
-        GUILayout.Box("", GUILayout.Width(16), GUILayout.Height(16));
-        GUI.color = old;
-    }
+    private Editor configEditor;
 }

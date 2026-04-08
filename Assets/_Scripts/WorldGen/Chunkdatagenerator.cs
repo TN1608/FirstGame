@@ -6,155 +6,58 @@ namespace ProceduralWorld.Data
 {
     /// <summary>
     /// ChunkDataGenerator — Pure data generation (no MonoBehaviour, thread-safe)
-    /// 
-    /// Generates tile data and object spawn points for a chunk.
-    /// Can be called from worker threads for async generation.
+    /// Manages both terrain mesh data and tilemap object placement data.
     /// </summary>
     public class ChunkDataGenerator
     {
-        private NoiseConfig noiseConfig;
-        private int seed;
-        private AnimationCurve heightCurve;
+        private WorldGenerationConfig config;
         private Vector2 noiseOffset;
 
-        public ChunkDataGenerator(
-            NoiseConfig noiseConfig,
-            int seed,
-            AnimationCurve heightCurve = null)
+        public ChunkDataGenerator(WorldGenerationConfig config)
         {
-            this.noiseConfig = noiseConfig;
-            this.seed = seed;
-            this.heightCurve = heightCurve ?? AnimationCurve.Linear(0, 0, 1, 1);
+            this.config = config;
 
             // Derive consistent offset from seed
-            System.Random prng = new System.Random(seed);
+            System.Random prng = new System.Random(config.seed);
             noiseOffset = new Vector2(
                 prng.Next(-100000, 100000),
                 prng.Next(-100000, 100000)
             );
         }
 
+        public Vector2 GetNoiseOffset() => noiseOffset;
+
         /// <summary>
-        /// Generate complete chunk data including terrain and elevation levels
+        /// Generate complete chunk data including terrain heights and biome map.
         /// </summary>
-        public void GenerateChunkData(
-            ChunkData chunk,
-            int chunkSize,
-            float tileSize = 1f)
+        public void GenerateChunkData(ChunkData chunk)
         {
-            for (int cy = 0; cy < chunkSize; cy++)
+            int size = chunk.chunkSize;
+            for (int y = 0; y < size; y++)
             {
-                for (int cx = 0; cx < chunkSize; cx++)
+                for (int x = 0; x < size; x++)
                 {
-                    // World coordinates
-                    int worldX = chunk.coord.x * chunkSize + cx;
-                    int worldY = chunk.coord.y * chunkSize + cy;
+                    int worldX = chunk.coord.x * size + x;
+                    int worldY = chunk.coord.y * size + y;
 
-                    // Generate noise
-                    float noiseValue = ImprovedNoiseGenerator.GetTerrainNoiseWithCurve(
-                        worldX, worldY,
-                        noiseConfig,
-                        heightCurve,
-                        seed,
-                        noiseOffset
-                    );
-
-                    chunk.noiseValues[cy, cx] = noiseValue;
-
-                    // Determine biome
-                    chunk.biomeMap[cy, cx] = ImprovedNoiseGenerator.GetBiomeType(noiseValue, worldX, worldY, seed);
-
-                    // Determine elevation level (0=ground, 1=mid, 2=high)
-                    chunk.elevationLevels[cy, cx] = ImprovedNoiseGenerator.GetElevationLevel(
-                        noiseValue,
-                        midThreshold: 0.4f,
-                        highThreshold: 0.7f
-                    );
+                    float height01 = ImprovedNoiseGenerator.GetAdvancedHeight(worldX, worldY, config, noiseOffset);
+                    chunk.noiseValues[y, x] = height01;
+                    chunk.biomeMap[y, x] = ImprovedNoiseGenerator.GetBiome(height01, config);
+                    
+                    // Elevation level for tilemap compatibility (legacy/hybrid)
+                    chunk.elevationLevels[y, x] = Mathf.FloorToInt(height01 * 3f);
                 }
             }
-
             chunk.isGenerated = true;
         }
 
         /// <summary>
-        /// Determine if object can spawn at this location
-        /// Checks: biome compatibility, noise clustering, elevation level
+        /// Checks if an object can spawn based on biome and density.
         /// </summary>
-        public bool CanSpawnObject(
-            int worldX, int worldY,
-            BiomeType requiredBiome,
-            int requiredElevationLevel,
-            float spawnChance,
-            bool useClusterNoise = true,
-            float clusterScale = 0.15f,
-            float clusterThreshold = 0.55f)
+        public bool CanSpawnObject(int worldX, int worldY, BiomeType biome, float chance)
         {
-            // Random spawn chance
-            float spawnRoll = ImprovedNoiseGenerator.Hash(seed + 2, worldX, worldY);
-            if (spawnRoll > spawnChance)
-                return false;
-
-            // Biome check
-            float noiseValue = ImprovedNoiseGenerator.GetTerrainNoise(
-                worldX, worldY,
-                noiseConfig,
-                seed,
-                noiseOffset
-            );
-            BiomeType biome = ImprovedNoiseGenerator.GetBiomeType(noiseValue, worldX, worldY, seed);
-            if (biome != requiredBiome)
-                return false;
-
-            // Elevation level check
-            int elevLevel = ImprovedNoiseGenerator.GetElevationLevel(noiseValue);
-            if (elevLevel != requiredElevationLevel)
-                return false;
-
-            // Clustering check (objects group together)
-            if (useClusterNoise)
-            {
-                float clusterNoise = ImprovedNoiseGenerator.GetTerrainNoise(
-                    worldX, worldY,
-                    new NoiseConfig
-                    {
-                        scale = clusterScale,
-                        octaves = 2,
-                        persistence = 0.5f,
-                        lacunarity = 2.0f,
-                        redistributionPower = 1.0f,
-                        detailStrength = 0f
-                    },
-                    seed + 3,
-                    noiseOffset
-                );
-
-                if (clusterNoise < clusterThreshold)
-                    return false;
-            }
-
-            return true;
-        }
-
-        /// <summary>
-        /// Get spawn position within a tile (with jitter)
-        /// </summary>
-        public Vector3 GetSpawnPosition(
-            int worldX, int worldY,
-            float tileSize = 1f,
-            float yOffset = 0.1f,
-            float positionJitter = 0.2f)
-        {
-            // Deterministic jitter from hash
-            float jitterX = (ImprovedNoiseGenerator.Hash(seed + 10, worldX, worldY) - 0.5f) * positionJitter;
-            float jitterY = (ImprovedNoiseGenerator.Hash(seed + 11, worldX, worldY) - 0.5f) * positionJitter;
-
-            Vector3 basePos = new Vector3(
-                (worldX + 0.5f) * tileSize + jitterX,
-                (worldY + 0.5f) * tileSize + jitterY + yOffset,
-                0f
-            );
-
-            return basePos;
+            float roll = ImprovedNoiseGenerator.Hash(config.seed + 10, worldX, worldY);
+            return roll < chance;
         }
     }
 }

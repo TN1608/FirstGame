@@ -1,174 +1,64 @@
 ﻿using _Scripts.WorldGen;
 using UnityEngine;
+using ProceduralWorld.Generation;
 
 namespace ProceduralWorld.Generation
 {
-    /// <summary>
-    /// ImprovedNoiseGenerator — Deterministic noise for terrain generation
-    /// 
-    /// FEATURES:
-    ///   • Multi-octave Perlin (FBM) for natural terrain
-    ///   • White noise blending for micro-variation
-    ///   • Deterministic hashing for object spawning
-    ///   • Thread-safe (no MonoBehaviour)
-    ///   • Iso-core style terrain with terraces/levels
-    /// 
-    /// USAGE:
-    ///   float elevation = ImprovedNoiseGenerator.GetTerrainNoise(
-    ///       worldX, worldY, noiseConfig, seed
-    ///   );
-    /// </summary>
     public static class ImprovedNoiseGenerator
     {
         /// <summary>
-        /// Multi-octave Perlin noise (FBM) with optional white noise blending
-        /// Returns [0, 1]
+        /// Advanced terrain height noise calculation using continentalness, erosion, and peaks & valleys.
+        /// Returns final height value.
         /// </summary>
-        public static float GetTerrainNoise(
-            int worldX, int worldY,
-            NoiseConfig config,
-            int seed,
-            Vector2 seedOffset)
+        public static float GetAdvancedHeight(int worldX, int worldY, WorldGenerationConfig config, Vector2 offset)
         {
-            float fbmValue = GetFBM(
-                worldX, worldY,
-                config.scale,
-                config.octaves,
-                config.persistence,
-                config.lacunarity,
-                config.redistributionPower,
-                seed,
-                seedOffset
-            );
+            // 1. Continentalness (Large scale land/sea)
+            float contNoise = NoiseGenerator.GetNoise2D(worldX, worldY, config.primaryNoise.scale * 0.1f, 3, 0.5f, 2f, 1f, offset);
+            float continentalness = config.continentalnessCurve.Evaluate(contNoise);
 
-            // ── Optional: Blend white noise for detail ──────────────
-            if (config.detailStrength > 0f)
-            {
-                float whiteNoise = GetWhiteNoise(worldX, worldY, seed + 1, seedOffset);
-                fbmValue = Mathf.Lerp(fbmValue, whiteNoise, config.detailStrength);
-            }
+            // 2. Erosion (Smoothness)
+            float erosionNoise = NoiseGenerator.GetNoise2D(worldX, worldY, config.primaryNoise.scale * 0.5f, 4, 0.5f, 2f, 1f, offset + new Vector2(100, 100));
+            float erosion = config.erosionCurve.Evaluate(erosionNoise);
 
-            return Mathf.Clamp01(fbmValue);
+            // 3. Peaks & Valleys (Jaggedness)
+            float pvNoise = NoiseGenerator.GetNoise2D(worldX, worldY, config.primaryNoise.scale, config.primaryNoise.octaves, config.primaryNoise.persistence, config.primaryNoise.lacunarity, config.primaryNoise.redistributionPower, offset + config.primaryNoise.layerOffset);
+            float peaksValleys = config.peaksValleysCurve.Evaluate(pvNoise);
+
+            // Combine layers
+            float finalHeight = continentalness + (peaksValleys * (1f - erosion));
+            return finalHeight;
         }
 
         /// <summary>
-        /// Fractional Brownian Motion (FBM) — classic multi-octave Perlin
+        /// Density field for 3D terrain features.
         /// </summary>
-        private static float GetFBM(
-            int worldX, int worldY,
-            float baseScale,
-            int octaves,
-            float persistence,
-            float lacunarity,
-            float redistributionPower,
-            int seed,
-            Vector2 seedOffset)
+        public static bool IsSolid(int x, int y, int z, WorldGenerationConfig config, Vector2 offset)
         {
-            float value = 0f;
-            float maxValue = 0f;
-            float amplitude = 1f;
-            float frequency = baseScale;
-
-            for (int i = 0; i < octaves; i++)
-            {
-                float sampleX = (worldX + seedOffset.x) * frequency;
-                float sampleY = (worldY + seedOffset.y) * frequency;
-
-                // Hash the coordinates for variation per octave
-                int hashedSeed = seed + (i * 73856093);
-                sampleX += Hash(hashedSeed, (int)sampleX, (int)sampleY);
-                sampleY += Hash(hashedSeed + 1, (int)sampleX, (int)sampleY);
-
-                value += Mathf.PerlinNoise(sampleX, sampleY) * amplitude;
-                maxValue += amplitude;
-
-                amplitude *= persistence;
-                frequency *= lacunarity;
-            }
-
-            float normalized = maxValue > 0f ? value / maxValue : 0.5f;
-            return Mathf.Pow(Mathf.Clamp01(normalized), redistributionPower);
-        }
-
-        /// <summary>
-        /// White noise: fast pseudo-random per (x,y) coordinate
-        /// Useful for micro-variation without Perlin artifacts
-        /// </summary>
-        private static float GetWhiteNoise(int x, int y, int seed, Vector2 offset)
-        {
-            int sx = (int)(x + offset.x);
-            int sy = (int)(y + offset.y);
-            return Hash(seed, sx, sy);
-        }
-
-        /// <summary>
-        /// Fast integer hash — deterministic, good distribution
-        /// Returns [0, 1]
-        /// </summary>
-        public static float Hash(int seed, int x, int y)
-        {
-            int h = seed ^ x * 374761393 ^ y * 668265263;
-            h = (h ^ (h >> 13)) * 1274126177;
-            h = h ^ (h >> 16);
-            return (float)(h & 0x7FFFFFFF) / 0x7FFFFFFF;
-        }
-
-        /// <summary>
-        /// Sample noise with custom animation curve (for terracing/elevation levels)
-        /// Useful for creating flat biome regions
-        /// </summary>
-        public static float GetTerrainNoiseWithCurve(
-            int worldX, int worldY,
-            NoiseConfig config,
-            AnimationCurve heightCurve,
-            int seed,
-            Vector2 seedOffset)
-        {
-            float noise = GetTerrainNoise(worldX, worldY, config, seed, seedOffset);
-            return heightCurve.Evaluate(noise);
-        }
-
-        /// <summary>
-        /// Determine elevation level based on noise value (0=ground, 1=mid, 2=high)
-        /// </summary>
-        public static int GetElevationLevel(float noiseValue, float midThreshold = 0.4f, float highThreshold = 0.7f)
-        {
-            if (noiseValue < midThreshold)
-                return 0;  // Ground level
-            else if (noiseValue < highThreshold)
-                return 1;  // Mid level
-            else
-                return 2;  // High level
-        }
-
-        /// <summary>
-        /// Determine biome from noise value and thresholds
-        /// </summary>
-        public static BiomeType GetBiomeType(float noiseValue, int worldX, int worldY, int seed)
-        {
-            // Distribution:
-            // 0.0-0.20  = Water
-            // 0.20-0.35 = Path
-            // 0.35-0.55 = Brush (với điều kiện phụ để thưa thớt)
-            // 0.55-0.80 = Grass
-            // 0.80-1.0 = Stone
-
-            if (noiseValue < 0.20f) return BiomeType.Water;
-            if (noiseValue < 0.35f) return BiomeType.Path;
+            float height = GetAdvancedHeight(x, y, config, offset) * config.meshHeightMultiplier;
             
-            if (noiseValue < 0.55f)
-            {
-                // Brush logic: lai rai (thưa thớt)
-                // Sử dụng hash noise phụ để kiểm tra xác suất
-                float brushDensity = Hash(seed + 999, worldX, worldY);
-                if (brushDensity < 0.3f) // Chỉ 30% vùng 0.35-0.55 là Brush
-                    return BiomeType.Brush;
-                else
-                    return BiomeType.Grass; // Nếu không là Brush thì cho thành Grass (hoặc Path tùy ý, nhưng Grass phổ biến hơn)
-            }
+            // Base ground check
+            if (z < height) return true;
             
-            if (noiseValue < 0.80f) return BiomeType.Grass;
-            return BiomeType.Stone;
+            // 3D Noise for overhangs
+            if (config.use3DNoiseForOverhangs && z < height + 5) // Only check near surface for performance
+            {
+                float density = NoiseGenerator.GetNoise3D(x, y, z, config.densityScale, offset);
+                if (density > config.densityThreshold) return true;
+            }
+
+            return false;
         }
+
+        public static BiomeType GetBiome(float noiseValue, WorldGenerationConfig config)
+        {
+            foreach (var bc in config.biomeConfigs)
+            {
+                if (noiseValue >= bc.noiseRange.x && noiseValue <= bc.noiseRange.y)
+                    return bc.biomeType;
+            }
+            return BiomeType.Grass;
+        }
+
+        public static float Hash(int seed, int x, int y) => NoiseGenerator.Hash(x, y, seed);
     }
 }
