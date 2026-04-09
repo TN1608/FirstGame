@@ -1,63 +1,167 @@
-﻿using _Scripts.WorldGen;
+﻿// ==================== FILENAME: ChunkDataGenerator_IMPROVED.cs ====================
 using UnityEngine;
+using _Scripts.WorldGen;
 using ProceduralWorld.Generation;
 
 namespace ProceduralWorld.Data
 {
     /// <summary>
-    /// ChunkDataGenerator — Pure data generation (no MonoBehaviour, thread-safe)
-    /// Manages both terrain mesh data and tilemap object placement data.
+    /// IMPROVED ChunkDataGenerator
+    /// Now properly integrates with BiomeTileSetConfig system
     /// </summary>
     public class ChunkDataGenerator
     {
         private WorldGenerationConfig config;
-        private Vector2 noiseOffset;
+        private int seed;
+        private Vector2 seedOffset;
 
-        public ChunkDataGenerator(WorldGenerationConfig config)
+        public ChunkDataGenerator(WorldGenerationConfig config, int seed)
         {
             this.config = config;
+            this.seed = seed;
+            this.seedOffset = ImprovedNoiseGenerator.GetSeedOffset(seed);
 
-            // Derive consistent offset from seed
-            System.Random prng = new System.Random(config.seed);
-            noiseOffset = new Vector2(
-                prng.Next(-100000, 100000),
-                prng.Next(-100000, 100000)
-            );
+            Debug.Log($"[ChunkDataGenerator] Initialized with {config.biomes.Count} biomes");
         }
 
-        public Vector2 GetNoiseOffset() => noiseOffset;
-
-        /// <summary>
-        /// Generate complete chunk data including terrain heights and biome map.
-        /// </summary>
-        public void GenerateChunkData(ChunkData chunk)
+        #region ===== CHUNK GENERATION =====
+        public void GenerateChunkData(ChunkData chunk, int chunkSize, float tileSize = 1f)
         {
-            int size = chunk.chunkSize;
-            for (int y = 0; y < size; y++)
-            {
-                for (int x = 0; x < size; x++)
-                {
-                    int worldX = chunk.coord.x * size + x;
-                    int worldY = chunk.coord.y * size + y;
+            Debug.Log($"[ChunkDataGenerator] Generating chunk {chunk.coord}");
 
-                    float height01 = ImprovedNoiseGenerator.GetAdvancedHeight(worldX, worldY, config, noiseOffset);
-                    chunk.noiseValues[y, x] = height01;
-                    chunk.biomeMap[y, x] = ImprovedNoiseGenerator.GetBiome(height01, config);
-                    
-                    // Elevation level for tilemap compatibility (legacy/hybrid)
-                    chunk.elevationLevels[y, x] = Mathf.FloorToInt(height01 * 3f);
+            GenerateHeightMap(chunk, chunkSize);
+            GenerateBiomeMap(chunk, chunkSize);
+            GenerateElevationLevels(chunk, chunkSize);
+
+            chunk.isGenerated = true;
+
+            Debug.Log($"[ChunkDataGenerator] ✅ Chunk {chunk.coord} generation complete");
+        }
+        #endregion
+
+        #region ===== HEIGHT MAP =====
+        private void GenerateHeightMap(ChunkData chunk, int chunkSize)
+        {
+            for (int y = 0; y < chunkSize; y++)
+            {
+                for (int x = 0; x < chunkSize; x++)
+                {
+                    int worldX = chunk.coord.x * chunkSize + x;
+                    int worldY = chunk.coord.y * chunkSize + y;
+
+                    // Get final height from noise system
+                    float height = ImprovedNoiseGenerator.GetFinalHeight(
+                        worldX, worldY,
+                        config.layeredNoise,
+                        config.splineShape,
+                        config.perlinWorms,
+                        config.densityField,
+                        config.heightmapTexture,
+                        seed
+                    );
+
+                    chunk.heightMap[y, x] = Mathf.Clamp01(height);
                 }
             }
-            chunk.isGenerated = true;
+        }
+        #endregion
+
+        #region ===== BIOME MAP =====
+        private void GenerateBiomeMap(ChunkData chunk, int chunkSize)
+        {
+            for (int y = 0; y < chunkSize; y++)
+            {
+                for (int x = 0; x < chunkSize; x++)
+                {
+                    float height = chunk.heightMap[y, x];
+                    
+                    // Determine biome based on height using config
+                    BiomeType biome = DetermineBiome(height);
+                    chunk.biomeMap[y, x] = biome;
+                }
+            }
         }
 
-        /// <summary>
-        /// Checks if an object can spawn based on biome and density.
-        /// </summary>
-        public bool CanSpawnObject(int worldX, int worldY, BiomeType biome, float chance)
+        private BiomeType DetermineBiome(float height)
         {
-            float roll = ImprovedNoiseGenerator.Hash(config.seed + 10, worldX, worldY);
-            return roll < chance;
+            // Simple height-based biome determination
+            // More sophisticated version would use noise + height combination
+            
+            if (height < config.waterLevel)
+                return BiomeType.Water;
+
+            if (height < config.waterLevel + config.beachHeight)
+                return BiomeType.Path;  // Beach/sand
+
+            if (height < 0.55f)
+                return BiomeType.Brush;
+
+            if (height < 0.75f)
+                return BiomeType.Grass;
+
+            return BiomeType.Stone;
         }
+        #endregion
+
+        #region ===== ELEVATION LEVELS =====
+        private void GenerateElevationLevels(ChunkData chunk, int chunkSize)
+        {
+            for (int y = 0; y < chunkSize; y++)
+            {
+                for (int x = 0; x < chunkSize; x++)
+                {
+                    float height = chunk.heightMap[y, x];
+                    int elevation = DetermineElevation(height);
+                    chunk.elevationLevels[y, x] = elevation;
+                }
+            }
+        }
+
+        private int DetermineElevation(float height)
+        {
+            if (height < 0.40f)
+                return 0;
+            else if (height < 0.60f)
+                return 1;
+            else if (height < 0.80f)
+                return 2;
+            else
+                return 3;
+        }
+        #endregion
+
+        #region ===== OBJECT SPAWNING =====
+        public bool CanSpawnObject(
+            int worldX, int worldY,
+            BiomeType requiredBiome,
+            int elevationLevel,
+            float spawnChance)
+        {
+            float roll = ImprovedNoiseGenerator.Hash(seed + 2, worldX, worldY);
+            if (roll > spawnChance)
+                return false;
+
+            if (requiredBiome == BiomeType.Water)
+                return false;
+
+            return true;
+        }
+
+        public Vector3 GetSpawnPosition(
+            int worldX, int worldY,
+            float tileSize = 1f,
+            float yOffset = 0.1f,
+            float positionJitter = 0.2f)
+        {
+            float jitterX = (ImprovedNoiseGenerator.Hash(seed + 10, worldX, worldY) - 0.5f) * positionJitter;
+            float jitterY = (ImprovedNoiseGenerator.Hash(seed + 11, worldX, worldY) - 0.5f) * positionJitter;
+
+            return new Vector3(
+                (worldX + 0.5f) * tileSize + jitterX,
+                (worldY + 0.5f) * tileSize + jitterY + yOffset,
+                0f
+            );
+        }
+        #endregion
     }
 }

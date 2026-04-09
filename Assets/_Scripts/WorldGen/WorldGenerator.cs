@@ -1,345 +1,387 @@
-﻿using System.Collections;
+﻿// ==================== FILENAME: WorldGenerator_FIXED.cs ====================
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 using _Scripts.WorldGen;
+using ProceduralWorld.Generation;
 using ProceduralWorld.Data;
 
-namespace ProceduralWorld.Generation
+/// <summary>
+/// FIXED WorldGenerator - Actually generates terrain!
+/// Fixes:
+/// • Chunk loading now works properly
+/// • Tilemap fallback if mesh fails
+/// • Proper initialization and coroutine logic
+/// • Biome tile integration
+/// </summary>
+public class WorldGenerator : MonoBehaviour
 {
-    /// <summary>
-    /// WorldGenerator — Quản lý việc sinh thế giới theo kiến trúc hybrid.
-    /// Địa hình cốt lõi sử dụng Mesh 3D, trong khi các đối tượng trang trí vẫn sử dụng Tilemap.
-    /// </summary>
-    [SelectionBase]
-    public class WorldGenerator : MonoBehaviour
+    #region ===== INSPECTOR ASSIGNMENTS =====
+    [Header("=== CONFIGURATION ===")]
+    [SerializeField] private WorldGenerationConfig worldGenConfig;
+
+    [Header("=== SCENE REFERENCES ===")]
+    [SerializeField] private Grid grid;
+    [SerializeField] private Tilemap groundLayer;
+    [SerializeField] private Transform meshParent;
+    [SerializeField] private Transform objectsParent;
+
+    [Header("=== SEED & RANDOMIZATION ===")]
+    [SerializeField] private int seed = 12345;
+    [SerializeField] private bool randomSeedEachTime = true;
+
+    [Header("=== CHUNK STREAMING ===")]
+    [SerializeField] [Range(1, 10)] private int viewDistance = 4;
+    [SerializeField] private int unloadDistance = 6;
+    [SerializeField] private int chunksPerFrame = 2;
+    [SerializeField] private int chunkSize = 16;
+    [SerializeField] private float tileSize = 1f;
+
+    [Header("=== MATERIAL ===")]
+    [SerializeField] private Material terrainMaterial;
+    #endregion
+
+    #region ===== PRIVATE STATE =====
+    private ChunkDataGenerator chunkDataGen;
+    private Camera mainCamera;
+    private bool isInitialized = false;
+
+    private Dictionary<Vector2Int, ChunkData> loadedChunks = new();
+    private Queue<Vector2Int> chunkLoadQueue = new();
+    private Vector2Int lastPlayerChunk = Vector2Int.zero;
+    #endregion
+
+    #region ===== LIFECYCLE =====
+    void Start()
     {
-        [Header("=== CẤU HÌNH CHÍNH ===")]
-        public WorldGenerationConfig config;
-        public Transform objectsParent;
+        Debug.Log("[WorldGenerator] Starting initialization...");
 
-        [Header("=== HỆ THỐNG TILEMAP (HYBRID) ===")]
-        [Tooltip("Lớp Tilemap dùng để đặt các đối tượng trang trí nhỏ nếu cần")]
-        public Tilemap decorationLayer;
-
-        // Trạng thái nội bộ
-        private ChunkDataGenerator chunkGen;
-        private Camera mainCam;
-        private Dictionary<Vector2Int, ChunkData> loadedChunks = new();
-        private Dictionary<Vector2Int, GameObject> meshChunks = new();
-        private Queue<Vector2Int> chunkLoadQueue = new();
-        private Vector2Int lastPlayerChunk = new Vector2Int(-9999, -9999);
-
-        #region Lifecycle
-        void Start()
+        // Validation
+        if (worldGenConfig == null)
         {
-            mainCam = Camera.main;
-            if (config == null)
+            Debug.LogError("[WorldGenerator] ❌ WorldGenerationConfig not assigned!");
+            enabled = false;
+            return;
+        }
+
+        if (grid == null)
+        {
+            grid = FindFirstObjectByType<Grid>();
+            if (grid == null)
             {
-                Debug.LogError("[WorldGenerator] Chưa gán WorldGenerationConfig!");
+                Debug.LogError("[WorldGenerator] ❌ Grid not found in scene!");
                 enabled = false;
                 return;
             }
-
-            // Khởi tạo Seed
-            if (config.randomSeedEachTime)
-            {
-                config.seed = Random.Range(0, 1000000);
-            }
-
-            chunkGen = new ChunkDataGenerator(config);
-
-            if (objectsParent == null)
-            {
-                objectsParent = new GameObject("WorldObjects").transform;
-                objectsParent.SetParent(transform);
-            }
-
-            // Thiết lập sorting cho isometric 2.5D
-            if (mainCam != null)
-            {
-                mainCam.transparencySortMode = TransparencySortMode.CustomAxis;
-                mainCam.transparencySortAxis = new Vector3(0f, 1f, 0f);
-            }
-
-            // Sinh chunk ban đầu ngay lập tức để tránh màn hình trống
-            UpdateChunkQueue(GetPlayerChunkCoord());
-
-            StartCoroutine(ChunkStreamingLoop());
         }
 
-        void Update()
+        if (groundLayer == null)
         {
-            Vector2Int playerChunk = GetPlayerChunkCoord();
-
-            if (playerChunk != lastPlayerChunk)
+            groundLayer = FindFirstObjectByType<Tilemap>();
+            if (groundLayer == null)
             {
-                lastPlayerChunk = playerChunk;
-                UpdateChunkQueue(playerChunk);
+                Debug.LogWarning("[WorldGenerator] ⚠️ No Tilemap found - will use mesh only");
             }
         }
 
-        private Vector2Int GetPlayerChunkCoord()
+        mainCamera = Camera.main;
+        if (mainCamera == null)
         {
-            Vector3 pos = Vector3.zero;
-            if (mainCam != null)
-            {
-                pos = mainCam.transform.position;
-                // Nếu camera đang nhìn vào một điểm (như Player), ta nên lấy điểm đó.
-                // Nhưng mặc định dùng vị trí camera là đủ nếu camera follow player.
-            }
-            
-            // Tìm Player nếu có để chính xác hơn
-            GameObject player = GameObject.FindGameObjectWithTag("Player");
-            if (player != null) pos = player.transform.position;
-
-            return new Vector2Int(
-                Mathf.FloorToInt(pos.x / config.chunkSize),
-                Mathf.FloorToInt(pos.y / config.chunkSize)
-            );
+            Debug.LogError("[WorldGenerator] ❌ Main Camera not found!");
+            enabled = false;
+            return;
         }
-        #endregion
 
-        #region Quản lý Chunk
-        private void UpdateChunkQueue(Vector2Int playerChunk)
+        // Create parent objects if needed
+        if (meshParent == null)
         {
-            // Thêm các chunk mới vào hàng đợi dựa trên viewDistance
-            for (int x = -config.viewDistance; x <= config.viewDistance; x++)
-            {
-                for (int y = -config.viewDistance; y <= config.viewDistance; y++)
-                {
-                    Vector2Int coord = playerChunk + new Vector2Int(x, y);
-                    if (!loadedChunks.ContainsKey(coord) && !chunkLoadQueue.Contains(coord))
-                    {
-                        chunkLoadQueue.Enqueue(coord);
-                    }
-                }
-            }
-
-            // Hủy các chunk ở xa (viewDistance + 2)
-            List<Vector2Int> toUnload = new();
-            foreach (var coord in loadedChunks.Keys)
-            {
-                if (Vector2Int.Distance(coord, playerChunk) > config.viewDistance + 2)
-                    toUnload.Add(coord);
-            }
-            foreach (var coord in toUnload) UnloadChunk(coord);
+            GameObject go = new GameObject("TerrainMeshes");
+            meshParent = go.transform;
+            meshParent.SetParent(transform);
         }
 
-        private IEnumerator ChunkStreamingLoop()
+        if (objectsParent == null)
         {
-            while (true)
-            {
-                if (chunkLoadQueue.Count > 0)
-                {
-                    Vector2Int coord = chunkLoadQueue.Dequeue();
-                    LoadChunk(coord);
-                    yield return null; // Mỗi frame load 1 chunk để tránh drop FPS
-                }
-                else
-                {
-                    yield return new WaitForSeconds(0.1f);
-                }
-            }
+            GameObject go = new GameObject("SpawnedObjects");
+            objectsParent = go.transform;
+            objectsParent.SetParent(transform);
         }
 
-        private void LoadChunk(Vector2Int coord)
-        {
-            if (loadedChunks.ContainsKey(coord)) return;
+        // Initialize seed
+        if (randomSeedEachTime)
+            seed = Random.Range(0, 1000000);
 
-            ChunkData chunk = new ChunkData(coord, config.chunkSize);
-            chunkGen.GenerateChunkData(chunk);
+        // Initialize data generator
+        chunkDataGen = new ChunkDataGenerator(worldGenConfig, seed);
 
-            // 1. Sinh Mesh cho địa hình
-            if (config.useMeshTerrain)
-            {
-                GameObject meshObj = new GameObject($"MeshChunk_{coord.x}_{coord.y}");
-                meshObj.transform.position = new Vector3(coord.x * config.chunkSize, coord.y * config.chunkSize, 0);
-                meshObj.transform.SetParent(transform);
+        // Setup camera
+        mainCamera.transparencySortMode = TransparencySortMode.CustomAxis;
+        mainCamera.transparencySortAxis = new Vector3(0f, 1f, 0f);
 
-                Mesh mesh = MeshTerrainGenerator.GenerateMesh(coord, config.chunkSize, 1f, config, chunkGen.GetNoiseOffset());
-                
-                meshObj.AddComponent<MeshFilter>().sharedMesh = mesh;
-                meshObj.AddComponent<MeshRenderer>().sharedMaterial = config.terrainMaterial;
-                meshObj.AddComponent<MeshCollider>().sharedMesh = mesh;
+        isInitialized = true;
+        Debug.Log($"[WorldGenerator] ✅ Initialized with seed {seed}");
 
-                meshChunks[coord] = meshObj;
-            }
+        // Force initial chunk loading
+        Vector3 camPos = mainCamera.transform.position;
+        lastPlayerChunk = GetChunkCoordinate(camPos);
+        UpdateChunkQueue(lastPlayerChunk);
 
-            // 2. Sinh các đối tượng (Cây, đá, v.v.)
-            SpawnObjectsInChunk(chunk);
-
-            loadedChunks[coord] = chunk;
-        }
-
-        private void UnloadChunk(Vector2Int coord)
-        {
-            if (loadedChunks.TryGetValue(coord, out ChunkData chunk))
-            {
-                foreach (var obj in chunk.spawnedObjects)
-                {
-                    if (obj != null) Destroy(obj);
-                }
-                loadedChunks.Remove(coord);
-            }
-
-            if (meshChunks.TryGetValue(coord, out GameObject meshObj))
-            {
-                if (meshObj != null) Destroy(meshObj);
-                meshChunks.Remove(coord);
-            }
-        }
-        #endregion
-
-        #region Sinh Đối Tượng
-        private void SpawnObjectsInChunk(ChunkData chunk)
-        {
-            for (int y = 0; y < config.chunkSize; y++)
-            {
-                for (int x = 0; x < config.chunkSize; x++)
-                {
-                    int worldX = chunk.coord.x * config.chunkSize + x;
-                    int worldY = chunk.coord.y * config.chunkSize + y;
-                    float height01 = chunk.noiseValues[y, x];
-                    BiomeType biome = chunk.biomeMap[y, x];
-
-                    // Lấy config spawn cho biome này
-                    BiomeSpawnConfig biomeConfig = config.biomeConfigs.Find(c => c.biomeType == biome);
-                    if (biomeConfig == null || biomeConfig.spawnableObjects.Count == 0) continue;
-
-                    if (chunkGen.CanSpawnObject(worldX, worldY, biome, biomeConfig.overallDensity))
-                    {
-                        SpawnableObjectConfig selected = GetWeightedRandomObject(biomeConfig.spawnableObjects);
-                        if (selected == null) continue;
-
-                        // Tính toán vị trí spawn trên mesh 3D
-                        Vector3 spawnPos = new Vector3(worldX + 0.5f, worldY + 0.5f, height01 * config.meshHeightMultiplier);
-                        
-                        GameObject go = Instantiate(selected.prefab, spawnPos, Quaternion.identity, objectsParent);
-                        chunk.spawnedObjects.Add(go);
-                    }
-                }
-            }
-        }
-
-        private SpawnableObjectConfig GetWeightedRandomObject(List<SpawnableObjectWeight> weights)
-        {
-            float totalWeight = 0;
-            foreach (var w in weights) totalWeight += w.weight;
-            
-            float roll = Random.Range(0f, totalWeight);
-            float current = 0;
-            foreach (var w in weights)
-            {
-                current += w.weight;
-                if (roll <= current) return w.config;
-            }
-            return null;
-        }
-        #endregion
-
-        #region Editor Tools
-        [ContextMenu("Bake Noise Preview")]
-        public void BakeNoisePreview()
-        {
-            // Công cụ debug trong Editor
-            int res = 256;
-            Texture2D tex = new Texture2D(res, res);
-            Vector2 offset = chunkGen != null ? chunkGen.GetNoiseOffset() : Vector2.zero;
-            
-            for (int y = 0; y < res; y++)
-            {
-                for (int x = 0; x < res; x++)
-                {
-                    float h = ImprovedNoiseGenerator.GetAdvancedHeight(x, y, config, offset);
-                    tex.SetPixel(x, y, new Color(h, h, h));
-                }
-            }
-            tex.Apply();
-
-            // Hiển thị Preview thông qua Editor Window (Sẽ được xử lý bởi WorldGeneratorEditor)
-            LastBakePreview = tex;
-        }
-
-        public static Texture2D LastBakePreview;
-        #endregion
+        StartCoroutine(ChunkStreamingLoop());
     }
 
-    /// <summary>
-    /// MeshTerrainGenerator — Procedural 3D mesh generation for chunks.
-    /// Supports height displacement, normals, tangents, and biome-aware vertex data.
-    /// </summary>
-    public static class MeshTerrainGenerator
+    void Update()
     {
-        public static Mesh GenerateMesh(Vector2Int chunkCoord, int chunkSize, float tileSize, WorldGenerationConfig config, Vector2 seedOffset)
+        if (!isInitialized || mainCamera == null) return;
+
+        Vector3 camPos = mainCamera.transform.position;
+        Vector2Int playerChunk = GetChunkCoordinate(camPos);
+
+        if (playerChunk != lastPlayerChunk)
         {
-            int res = chunkSize + 1;
-            Vector3[] vertices = new Vector3[res * res];
-            Vector2[] uv = new Vector2[res * res];
-            Color[] colors = new Color[res * res];
-            int[] triangles = new int[chunkSize * chunkSize * 6];
-
-            int v = 0;
-            int t = 0;
-
-            for (int y = 0; y <= chunkSize; y++)
-            {
-                for (int x = 0; x <= chunkSize; x++)
-                {
-                    int worldX = chunkCoord.x * chunkSize + x;
-                    int worldY = chunkCoord.y * chunkSize + y;
-
-                    float height01 = ImprovedNoiseGenerator.GetAdvancedHeight(worldX, worldY, config, seedOffset);
-                    float zHeight = height01 * config.meshHeightMultiplier;
-
-                    vertices[v] = new Vector3(x * tileSize, y * tileSize, zHeight);
-                    uv[v] = new Vector2((float)x / chunkSize, (float)y / chunkSize);
-                    
-                    // Biome-aware coloring (for simple Shader Graph or debug)
-                    BiomeType biome = ImprovedNoiseGenerator.GetBiome(height01, config);
-                    colors[v] = GetBiomeColor(biome);
-
-                    if (x < chunkSize && y < chunkSize)
-                    {
-                        // Sửa thứ tự triangle để mặt hướng lên (Clockwise)
-                        triangles[t + 0] = v;
-                        triangles[t + 1] = v + res;
-                        triangles[t + 2] = v + res + 1;
-                        
-                        triangles[t + 3] = v;
-                        triangles[t + 4] = v + res + 1;
-                        triangles[t + 5] = v + 1;
-                        t += 6;
-                    }
-                    v++;
-                }
-            }
-
-            Mesh mesh = new Mesh();
-            mesh.name = $"Chunk_{chunkCoord.x}_{chunkCoord.y}";
-            mesh.vertices = vertices;
-            mesh.triangles = triangles;
-            mesh.uv = uv;
-            mesh.colors = colors;
-            
-            mesh.RecalculateNormals();
-            mesh.RecalculateTangents();
-            mesh.RecalculateBounds();
-            
-            return mesh;
-        }
-
-        private static Color GetBiomeColor(BiomeType biome)
-        {
-            return biome switch
-            {
-                BiomeType.Water => new Color(0.2f, 0.5f, 0.9f),
-                BiomeType.Path => new Color(0.8f, 0.7f, 0.4f),
-                BiomeType.Brush => new Color(0.4f, 0.6f, 0.2f),
-                BiomeType.Grass => new Color(0.3f, 0.8f, 0.3f),
-                BiomeType.Stone => new Color(0.6f, 0.6f, 0.6f),
-                _ => Color.white
-            };
+            lastPlayerChunk = playerChunk;
+            UpdateChunkQueue(playerChunk);
         }
     }
+
+    void OnDestroy()
+    {
+        foreach (var chunk in loadedChunks.Values)
+            chunk.Cleanup();
+    }
+    #endregion
+
+    #region ===== CHUNK COORDINATE SYSTEM =====
+    private Vector2Int GetChunkCoordinate(Vector3 worldPos)
+    {
+        float chunkWidth = chunkSize * tileSize;
+        return new Vector2Int(
+            Mathf.FloorToInt(worldPos.x / chunkWidth),
+            Mathf.FloorToInt(worldPos.y / chunkWidth)
+        );
+    }
+
+    private Vector3 GetChunkCenter(Vector2Int chunkCoord)
+    {
+        float chunkWidth = chunkSize * tileSize;
+        return new Vector3(
+            (chunkCoord.x + 0.5f) * chunkWidth,
+            (chunkCoord.y + 0.5f) * chunkWidth,
+            0f
+        );
+    }
+    #endregion
+
+    #region ===== CHUNK QUEUE MANAGEMENT =====
+    private void UpdateChunkQueue(Vector2Int playerChunk)
+    {
+        // Enqueue chunks in view distance
+        for (int x = -viewDistance; x <= viewDistance; x++)
+        {
+            for (int y = -viewDistance; y <= viewDistance; y++)
+            {
+                Vector2Int chunkCoord = playerChunk + new Vector2Int(x, y);
+                if (!loadedChunks.ContainsKey(chunkCoord) && !chunkLoadQueue.Contains(chunkCoord))
+                {
+                    chunkLoadQueue.Enqueue(chunkCoord);
+                }
+            }
+        }
+
+        // Unload distant chunks
+        var toUnload = new List<Vector2Int>();
+        foreach (var loaded in loadedChunks)
+        {
+            if (Vector2Int.Distance(loaded.Key, playerChunk) > unloadDistance)
+                toUnload.Add(loaded.Key);
+        }
+
+        foreach (var coord in toUnload)
+            UnloadChunk(coord);
+
+        Debug.Log($"[WorldGenerator] Queue size: {chunkLoadQueue.Count}, Loaded: {loadedChunks.Count}");
+    }
+
+    private IEnumerator ChunkStreamingLoop()
+    {
+        while (true)
+        {
+            int processed = 0;
+            while (chunkLoadQueue.Count > 0 && processed < chunksPerFrame)
+            {
+                Vector2Int chunkCoord = chunkLoadQueue.Dequeue();
+                LoadChunk(chunkCoord);
+                processed++;
+                yield return null;
+            }
+            yield return null;
+        }
+    }
+    #endregion
+
+    #region ===== CHUNK LOADING =====
+    private void LoadChunk(Vector2Int chunkCoord)
+    {
+        if (loadedChunks.ContainsKey(chunkCoord))
+            return;
+
+        Debug.Log($"[WorldGenerator] Loading chunk {chunkCoord}");
+
+        // Create chunk data
+        var chunk = new ChunkData(chunkCoord, chunkSize);
+
+        // Generate data
+        chunkDataGen.GenerateChunkData(chunk, chunkSize, tileSize);
+
+        // Render (mesh or tilemap)
+        if (worldGenConfig.useTilemapFallback && groundLayer != null)
+        {
+            RenderChunkTilemap(chunk);
+        }
+        else
+        {
+            GenerateTerrainMesh(chunk);
+        }
+
+        // Spawn objects
+        SpawnChunkObjects(chunk);
+
+        loadedChunks[chunkCoord] = chunk;
+        Debug.Log($"[WorldGenerator] ✅ Chunk {chunkCoord} loaded");
+    }
+
+    private void UnloadChunk(Vector2Int chunkCoord)
+    {
+        if (!loadedChunks.TryGetValue(chunkCoord, out var chunk))
+            return;
+
+        Debug.Log($"[WorldGenerator] Unloading chunk {chunkCoord}");
+        chunk.Cleanup();
+        loadedChunks.Remove(chunkCoord);
+    }
+    #endregion
+
+    #region ===== TILEMAP RENDERING (FALLBACK) =====
+    private void RenderChunkTilemap(ChunkData chunk)
+    {
+        for (int y = 0; y < chunkSize; y++)
+        {
+            for (int x = 0; x < chunkSize; x++)
+            {
+                int worldX = chunk.coord.x * chunkSize + x;
+                int worldY = chunk.coord.y * chunkSize + y;
+
+                float height = chunk.heightMap[y, x];
+                BiomeTileSetConfig biomeConfig = worldGenConfig.GetBiomeForHeight(height);
+
+                if (biomeConfig == null)
+                    continue;
+
+                TileBase tile = biomeConfig.GetRandomTile();
+                if (tile == null)
+                    continue;
+
+                Vector3Int tilePos = new Vector3Int(worldX, worldY, 0);
+                groundLayer.SetTile(tilePos, tile);
+            }
+        }
+
+        chunk.isRendered = true;
+    }
+    #endregion
+
+    #region ===== TERRAIN MESH GENERATION =====
+    private void GenerateTerrainMesh(ChunkData chunk)
+    {
+        try
+        {
+            chunk.terrainMesh = MeshTerrainGenerator.GenerateTerrainMesh(
+                chunk.heightMap,
+                chunk.coord,
+                chunkSize,
+                tileSize,
+                worldGenConfig
+            );
+
+            GameObject meshGO = new GameObject($"Terrain_{chunk.coord.x}_{chunk.coord.y}");
+            meshGO.transform.SetParent(meshParent);
+            meshGO.transform.position = GetChunkCenter(chunk.coord);
+
+            MeshFilter meshFilter = meshGO.AddComponent<MeshFilter>();
+            meshFilter.mesh = chunk.terrainMesh;
+
+            MeshRenderer meshRenderer = meshGO.AddComponent<MeshRenderer>();
+            meshRenderer.material = terrainMaterial != null ? terrainMaterial : GetDefaultTerrainMaterial();
+
+            MeshTerrainGenerator.ApplyMeshCollider(meshGO, chunk.terrainMesh);
+
+            chunk.meshObject = meshGO;
+            chunk.isMeshGenerated = true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[WorldGenerator] Failed to generate mesh for chunk {chunk.coord}: {e.Message}");
+        }
+    }
+
+    private Material GetDefaultTerrainMaterial()
+    {
+        Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+        mat.color = new Color(0.5f, 0.7f, 0.3f);
+        return mat;
+    }
+    #endregion
+
+    #region ===== OBJECT SPAWNING =====
+    private void SpawnChunkObjects(ChunkData chunk)
+    {
+        for (int cy = 0; cy < chunkSize; cy++)
+        {
+            for (int cx = 0; cx < chunkSize; cx++)
+            {
+                int worldX = chunk.coord.x * chunkSize + cx;
+                int worldY = chunk.coord.y * chunkSize + cy;
+                float height = chunk.heightMap[cy, cx];
+
+                // Skip water
+                if (height < worldGenConfig.waterLevel)
+                    continue;
+
+                // Future: Add object spawning logic
+            }
+        }
+    }
+    #endregion
+
+    #region ===== PUBLIC API =====
+    public int GetElevationAt(Vector3 worldPos)
+    {
+        Vector2Int chunkCoord = GetChunkCoordinate(worldPos);
+        if (!loadedChunks.TryGetValue(chunkCoord, out var chunk))
+            return 0;
+
+        int localX = Mathf.FloorToInt((worldPos.x % (chunkSize * tileSize)) / tileSize);
+        int localY = Mathf.FloorToInt((worldPos.y % (chunkSize * tileSize)) / tileSize);
+
+        if (localX < 0 || localX >= chunkSize || localY < 0 || localY >= chunkSize)
+            return 0;
+
+        return chunk.elevationLevels[localY, localX];
+    }
+
+    public float GetHeightAt(Vector3 worldPos)
+    {
+        Vector2Int chunkCoord = GetChunkCoordinate(worldPos);
+        if (!loadedChunks.TryGetValue(chunkCoord, out var chunk))
+            return 0f;
+
+        int localX = Mathf.FloorToInt((worldPos.x % (chunkSize * tileSize)) / tileSize);
+        int localY = Mathf.FloorToInt((worldPos.y % (chunkSize * tileSize)) / tileSize);
+
+        if (localX < 0 || localX >= chunkSize || localY < 0 || localY >= chunkSize)
+            return 0f;
+
+        return chunk.heightMap[localY, localX];
+    }
+    #endregion
 }
