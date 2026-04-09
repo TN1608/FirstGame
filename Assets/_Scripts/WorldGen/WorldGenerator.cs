@@ -1,4 +1,6 @@
-﻿// ==================== FILENAME: WorldGenerator_FIXED.cs ====================
+﻿// ==================== WorldGenerator_COMPLETE.cs ====================
+// Complete working world generator with proper 3D terrain and natural biome distribution
+
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -8,12 +10,14 @@ using ProceduralWorld.Generation;
 using ProceduralWorld.Data;
 
 /// <summary>
-/// FIXED WorldGenerator - Actually generates terrain!
-/// Fixes:
-/// • Chunk loading now works properly
-/// • Tilemap fallback if mesh fails
-/// • Proper initialization and coroutine logic
-/// • Biome tile integration
+/// COMPLETE WorldGenerator
+/// 
+/// Properly implements:
+/// • 3D mesh terrain with vertex displacement
+/// • Natural biome distribution (height-based, not random)
+/// • River generation via Perlin worms
+/// • Multi-layer tilemap rendering for visual depth
+/// • Complete chunk streaming system
 /// </summary>
 public class WorldGenerator : MonoBehaviour
 {
@@ -25,21 +29,22 @@ public class WorldGenerator : MonoBehaviour
     [SerializeField] private Grid grid;
     [SerializeField] private Tilemap groundLayer;
     [SerializeField] private Transform meshParent;
+    [SerializeField] private Transform tilemapParent;
     [SerializeField] private Transform objectsParent;
 
-    [Header("=== SEED & RANDOMIZATION ===")]
+    [Header("=== GENERATION SETTINGS ===")]
     [SerializeField] private int seed = 12345;
     [SerializeField] private bool randomSeedEachTime = true;
-
-    [Header("=== CHUNK STREAMING ===")]
-    [SerializeField] [Range(1, 10)] private int viewDistance = 4;
+    [SerializeField] private int viewDistance = 4;
     [SerializeField] private int unloadDistance = 6;
     [SerializeField] private int chunksPerFrame = 2;
     [SerializeField] private int chunkSize = 16;
     [SerializeField] private float tileSize = 1f;
 
-    [Header("=== MATERIAL ===")]
+    [Header("=== RENDERING ===")]
     [SerializeField] private Material terrainMaterial;
+    [SerializeField] private bool useMeshRendering = true;
+    [SerializeField] private bool useTilemapLayers = true;
     #endregion
 
     #region ===== PRIVATE STATE =====
@@ -50,14 +55,17 @@ public class WorldGenerator : MonoBehaviour
     private Dictionary<Vector2Int, ChunkData> loadedChunks = new();
     private Queue<Vector2Int> chunkLoadQueue = new();
     private Vector2Int lastPlayerChunk = Vector2Int.zero;
+
+    // Tilemap layers for elevation levels
+    private Dictionary<int, Tilemap> elevationLayerTilemaps = new();
     #endregion
 
     #region ===== LIFECYCLE =====
     void Start()
     {
-        Debug.Log("[WorldGenerator] Starting initialization...");
+        Debug.Log("[WorldGenerator COMPLETE] Starting initialization...");
 
-        // Validation
+        // Validate config
         if (worldGenConfig == null)
         {
             Debug.LogError("[WorldGenerator] ❌ WorldGenerationConfig not assigned!");
@@ -65,24 +73,30 @@ public class WorldGenerator : MonoBehaviour
             return;
         }
 
+        // Find Grid
+        if (grid == null)
+            grid = FindFirstObjectByType<Grid>();
+
         if (grid == null)
         {
-            grid = FindFirstObjectByType<Grid>();
-            if (grid == null)
-            {
-                Debug.LogError("[WorldGenerator] ❌ Grid not found in scene!");
-                enabled = false;
-                return;
-            }
+            Debug.LogError("[WorldGenerator] ❌ Grid not found!");
+            enabled = false;
+            return;
         }
 
+        // Find or create groundLayer
         if (groundLayer == null)
         {
             groundLayer = FindFirstObjectByType<Tilemap>();
-            if (groundLayer == null)
-            {
-                Debug.LogWarning("[WorldGenerator] ⚠️ No Tilemap found - will use mesh only");
-            }
+        }
+
+        if (groundLayer == null && useTilemapLayers)
+        {
+            Debug.LogWarning("[WorldGenerator] ⚠️ No Tilemap found, creating one...");
+            GameObject tilemapGO = new GameObject("groundLayer");
+            groundLayer = tilemapGO.AddComponent<Tilemap>();
+            tilemapGO.AddComponent<TilemapRenderer>();
+            tilemapGO.transform.SetParent(tilemapParent ?? transform);
         }
 
         mainCamera = Camera.main;
@@ -93,12 +107,19 @@ public class WorldGenerator : MonoBehaviour
             return;
         }
 
-        // Create parent objects if needed
+        // Create parents if needed
         if (meshParent == null)
         {
             GameObject go = new GameObject("TerrainMeshes");
             meshParent = go.transform;
             meshParent.SetParent(transform);
+        }
+
+        if (tilemapParent == null)
+        {
+            GameObject go = new GameObject("TerrainTilemaps");
+            tilemapParent = go.transform;
+            tilemapParent.SetParent(transform);
         }
 
         if (objectsParent == null)
@@ -112,7 +133,7 @@ public class WorldGenerator : MonoBehaviour
         if (randomSeedEachTime)
             seed = Random.Range(0, 1000000);
 
-        // Initialize data generator
+        // Initialize generator
         chunkDataGen = new ChunkDataGenerator(worldGenConfig, seed);
 
         // Setup camera
@@ -122,7 +143,7 @@ public class WorldGenerator : MonoBehaviour
         isInitialized = true;
         Debug.Log($"[WorldGenerator] ✅ Initialized with seed {seed}");
 
-        // Force initial chunk loading
+        // Force initial load
         Vector3 camPos = mainCamera.transform.position;
         lastPlayerChunk = GetChunkCoordinate(camPos);
         UpdateChunkQueue(lastPlayerChunk);
@@ -175,7 +196,7 @@ public class WorldGenerator : MonoBehaviour
     #region ===== CHUNK QUEUE MANAGEMENT =====
     private void UpdateChunkQueue(Vector2Int playerChunk)
     {
-        // Enqueue chunks in view distance
+        // Enqueue chunks
         for (int x = -viewDistance; x <= viewDistance; x++)
         {
             for (int y = -viewDistance; y <= viewDistance; y++)
@@ -198,8 +219,6 @@ public class WorldGenerator : MonoBehaviour
 
         foreach (var coord in toUnload)
             UnloadChunk(coord);
-
-        Debug.Log($"[WorldGenerator] Queue size: {chunkLoadQueue.Count}, Loaded: {loadedChunks.Count}");
     }
 
     private IEnumerator ChunkStreamingLoop()
@@ -227,24 +246,25 @@ public class WorldGenerator : MonoBehaviour
 
         Debug.Log($"[WorldGenerator] Loading chunk {chunkCoord}");
 
-        // Create chunk data
+        // Create chunk
         var chunk = new ChunkData(chunkCoord, chunkSize);
 
-        // Generate data
+        // Generate height map
         chunkDataGen.GenerateChunkData(chunk, chunkSize, tileSize);
 
-        // Render (mesh or tilemap)
-        if (worldGenConfig.useTilemapFallback && groundLayer != null)
-        {
-            RenderChunkTilemap(chunk);
-        }
-        else
+        // Generate PROPER biome distribution (natural, not random)
+        BiomeTerrainLayerSystem.GenerateCompleteBiomeMap(chunk, chunkSize, worldGenConfig, seed);
+
+        // Render
+        if (useMeshRendering)
         {
             GenerateTerrainMesh(chunk);
         }
 
-        // Spawn objects
-        SpawnChunkObjects(chunk);
+        if (useTilemapLayers)
+        {
+            RenderTilemapLayers(chunk);
+        }
 
         loadedChunks[chunkCoord] = chunk;
         Debug.Log($"[WorldGenerator] ✅ Chunk {chunkCoord} loaded");
@@ -255,38 +275,8 @@ public class WorldGenerator : MonoBehaviour
         if (!loadedChunks.TryGetValue(chunkCoord, out var chunk))
             return;
 
-        Debug.Log($"[WorldGenerator] Unloading chunk {chunkCoord}");
         chunk.Cleanup();
         loadedChunks.Remove(chunkCoord);
-    }
-    #endregion
-
-    #region ===== TILEMAP RENDERING (FALLBACK) =====
-    private void RenderChunkTilemap(ChunkData chunk)
-    {
-        for (int y = 0; y < chunkSize; y++)
-        {
-            for (int x = 0; x < chunkSize; x++)
-            {
-                int worldX = chunk.coord.x * chunkSize + x;
-                int worldY = chunk.coord.y * chunkSize + y;
-
-                float height = chunk.heightMap[y, x];
-                BiomeTileSetConfig biomeConfig = worldGenConfig.GetBiomeForHeight(height);
-
-                if (biomeConfig == null)
-                    continue;
-
-                TileBase tile = biomeConfig.GetRandomTile();
-                if (tile == null)
-                    continue;
-
-                Vector3Int tilePos = new Vector3Int(worldX, worldY, 0);
-                groundLayer.SetTile(tilePos, tile);
-            }
-        }
-
-        chunk.isRendered = true;
     }
     #endregion
 
@@ -295,61 +285,112 @@ public class WorldGenerator : MonoBehaviour
     {
         try
         {
-            chunk.terrainMesh = MeshTerrainGenerator.GenerateTerrainMesh(
+            // Generate proper 3D displaced mesh
+            chunk.terrainMesh = ProperHeightMapTerrainGenerator.GenerateDisplacedTerrainMesh(
                 chunk.heightMap,
+                chunk.biomeMap,
                 chunk.coord,
                 chunkSize,
                 tileSize,
                 worldGenConfig
             );
 
+            // Create GameObject
             GameObject meshGO = new GameObject($"Terrain_{chunk.coord.x}_{chunk.coord.y}");
             meshGO.transform.SetParent(meshParent);
             meshGO.transform.position = GetChunkCenter(chunk.coord);
 
+            // Add components
             MeshFilter meshFilter = meshGO.AddComponent<MeshFilter>();
             meshFilter.mesh = chunk.terrainMesh;
 
             MeshRenderer meshRenderer = meshGO.AddComponent<MeshRenderer>();
-            meshRenderer.material = terrainMaterial != null ? terrainMaterial : GetDefaultTerrainMaterial();
+            meshRenderer.material = terrainMaterial ?? GetDefaultTerrainMaterial();
 
-            MeshTerrainGenerator.ApplyMeshCollider(meshGO, chunk.terrainMesh);
+            // Collider
+            ProperHeightMapTerrainGenerator.SetupMeshCollider(meshGO, chunk.terrainMesh);
 
             chunk.meshObject = meshGO;
             chunk.isMeshGenerated = true;
+
+            Debug.Log($"[WorldGenerator] Mesh generated for chunk {chunk.coord}");
         }
         catch (System.Exception e)
         {
-            Debug.LogError($"[WorldGenerator] Failed to generate mesh for chunk {chunk.coord}: {e.Message}");
+            Debug.LogError($"[WorldGenerator] Mesh generation failed: {e.Message}");
         }
     }
 
     private Material GetDefaultTerrainMaterial()
     {
         Material mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-        mat.color = new Color(0.5f, 0.7f, 0.3f);
+        mat.color = new Color(0.6f, 0.8f, 0.3f);
         return mat;
     }
     #endregion
 
-    #region ===== OBJECT SPAWNING =====
-    private void SpawnChunkObjects(ChunkData chunk)
+    #region ===== TILEMAP LAYER RENDERING =====
+    private void RenderTilemapLayers(ChunkData chunk)
     {
-        for (int cy = 0; cy < chunkSize; cy++)
+        // Get or create tilemap layers for elevation
+        for (int elevation = 0; elevation <= 3; elevation++)
         {
-            for (int cx = 0; cx < chunkSize; cx++)
+            if (!elevationLayerTilemaps.TryGetValue(elevation, out var tilemap))
             {
-                int worldX = chunk.coord.x * chunkSize + cx;
-                int worldY = chunk.coord.y * chunkSize + cy;
-                float height = chunk.heightMap[cy, cx];
-
-                // Skip water
-                if (height < worldGenConfig.waterLevel)
-                    continue;
-
-                // Future: Add object spawning logic
+                tilemap = CreateElevationTilemap(elevation);
+                elevationLayerTilemaps[elevation] = tilemap;
             }
         }
+
+        // Render tiles to appropriate layers
+        for (int y = 0; y < chunkSize; y++)
+        {
+            for (int x = 0; x < chunkSize; x++)
+            {
+                int worldX = chunk.coord.x * chunkSize + x;
+                int worldY = chunk.coord.y * chunkSize + y;
+
+                float height = chunk.heightMap[y, x];
+                BiomeType biome = chunk.biomeMap[y, x];
+                int elevation = chunk.elevationLevels[y, x];
+
+                // Get tile
+                BiomeTileSetConfig biomeConfig = worldGenConfig.GetBiomeForHeight(height);
+                if (biomeConfig == null)
+                    continue;
+
+                TileBase tile = biomeConfig.GetRandomTile();
+                if (tile == null)
+                    continue;
+
+                Vector3Int tilePos = new Vector3Int(worldX, worldY, 0);
+
+                // Place on appropriate layer(s)
+                for (int e = 0; e <= elevation; e++)
+                {
+                    elevationLayerTilemaps[e].SetTile(tilePos, tile);
+                }
+            }
+        }
+
+        chunk.isRendered = true;
+    }
+
+    private Tilemap CreateElevationTilemap(int elevation)
+    {
+        string layerName = $"Layer_{elevation}";
+        GameObject tilemapGO = new GameObject(layerName);
+        tilemapGO.transform.SetParent(grid.transform);
+        tilemapGO.transform.position = new Vector3(0, elevation * 0.5f, 0);
+
+        Tilemap tilemap = tilemapGO.AddComponent<Tilemap>();
+        TilemapRenderer renderer = tilemapGO.AddComponent<TilemapRenderer>();
+
+        renderer.sortingLayerName = "Ground";
+        renderer.sortingOrder = elevation;
+        renderer.mode = TilemapRenderer.Mode.Individual;
+
+        return tilemap;
     }
     #endregion
 
@@ -382,6 +423,21 @@ public class WorldGenerator : MonoBehaviour
             return 0f;
 
         return chunk.heightMap[localY, localX];
+    }
+
+    public BiomeType GetBiomeAt(Vector3 worldPos)
+    {
+        Vector2Int chunkCoord = GetChunkCoordinate(worldPos);
+        if (!loadedChunks.TryGetValue(chunkCoord, out var chunk))
+            return BiomeType.Water;
+
+        int localX = Mathf.FloorToInt((worldPos.x % (chunkSize * tileSize)) / tileSize);
+        int localY = Mathf.FloorToInt((worldPos.y % (chunkSize * tileSize)) / tileSize);
+
+        if (localX < 0 || localX >= chunkSize || localY < 0 || localY >= chunkSize)
+            return BiomeType.Water;
+
+        return chunk.biomeMap[localY, localX];
     }
     #endregion
 }
