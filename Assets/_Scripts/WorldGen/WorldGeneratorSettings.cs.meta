@@ -1,0 +1,25 @@
+fileFormatVersion: 2
+guid: 893204d251508b04d924570e4196c3cc
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - continentalnessNoise: {instanceID: 0}
+  - erosionNoise: {instanceID: 0}
+  - weirdnessNoise: {instanceID: 0}
+  - temperatureNoise: {instanceID: 0}
+  - humidityNoise: {instanceID: 0}
+  - detailNoise: {instanceID: 0}
+  - decorationNoise: {instanceID: 0}
+  - biomeSettings: {instanceID: 0}
+  - terrainTilemap: {instanceID: 0}
+  - waterTilemap: {instanceID: 0}
+  - decorationTilemap: {instanceID: 0}
+  - defaultGroundTile: {instanceID: 0}
+  - defaultWaterTile: {instanceID: 0}
+  - stairTile: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

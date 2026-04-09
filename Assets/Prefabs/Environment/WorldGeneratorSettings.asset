@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 893204d251508b04d924570e4196c3cc, type: 3}
+  m_Name: WorldGeneratorSettings
+  m_EditorClassIdentifier: Assembly-CSharp::WorldGeneratorSettings
+  chunkSize: 16
+  renderDistanceInChunks: 3
+  baseHeight: 10
+  heightAmplitude: 20
+  seaLevel: 10
+  continentalnessNoise: {fileID: 11400000, guid: f51654686f457f049a456a2b5b5cfa72, type: 2}
+  erosionNoise: {fileID: 11400000, guid: 671d82d4d86fc3844aa4d2fb3fa16fce, type: 2}
+  weirdnessNoise: {fileID: 11400000, guid: 0f5846b6d5c3c224f8e516b480550b3a, type: 2}
+  temperatureNoise: {fileID: 11400000, guid: 517b5c9509847304a8be3e4272f59eba, type: 2}
+  humidityNoise: {fileID: 11400000, guid: bda78c2efca5b4b4c9d4e1285da75f2c, type: 2}
+  detailNoise: {fileID: 11400000, guid: deb2ab5b444d23a47a888648f0d9021a, type: 2}
+  decorationNoise: {fileID: 11400000, guid: 3805f32758e03bd4dbba50fd57485638, type: 2}
+  biomeSettings: {fileID: 11400000, guid: 78231a02e49c4bc408f86f2e639af254, type: 2}
+  terrainTilemap: {fileID: 0}
+  waterTilemap: {fileID: 0}
+  decorationTilemap: {fileID: 0}
+  defaultGroundTile: {fileID: 11400000, guid: 66a084bcd84c0e84295fe3c6c0486607, type: 2}
+  defaultWaterTile: {fileID: 11400000, guid: 04b6f548f6a4dfc47abe106767dc2fe0, type: 2}
+  colorStepDarken: 0.06
+  setStaticAfterGeneration: 1
+  stairSpawnChance: 0.1
+  stairTile: {fileID: 0}
+  continentalnessWeight: 1
+  erosionWeight: 0.5
+  peaksValleysWeight: 0.8
+  detailWeight: 0.2
