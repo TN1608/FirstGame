@@ -12,10 +12,7 @@ GameObject:
   - component: {fileID: 7371289006010394028}
   - component: {fileID: 1094242536273757269}
   - component: {fileID: 1067607398215885750}
-  - component: {fileID: 4746358517085900142}
-  - component: {fileID: 6525932923611293015}
-  - component: {fileID: 1594084855912289901}
-  - component: {fileID: 6240988340457876557}
+  - component: {fileID: 5869872136590021004}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -84,8 +81,8 @@ SpriteRenderer:
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: -608764895
-  m_SortingLayer: 4
+  m_SortingLayerID: 1092082529
+  m_SortingLayer: 2
   m_SortingOrder: 5
   m_MaskInteraction: 0
   m_Sprite: {fileID: -2976837118148077081, guid: a556bf7b5dbcbf84288eeea49d9009d3, type: 3}
@@ -128,7 +125,7 @@ Rigidbody2D:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 943648227868954951}
-  m_BodyType: 0
+  m_BodyType: 1
   m_Simulated: 1
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
@@ -147,53 +144,7 @@ Rigidbody2D:
   m_SleepingMode: 1
   m_CollisionDetection: 1
   m_Constraints: 4
---- !u!61 &4746358517085900142
-BoxCollider2D:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 943648227868954951}
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Density: 1
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_ForceSendLayers:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_ForceReceiveLayers:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_ContactCaptureLayers:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_CallbackLayers:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_IsTrigger: 0
-  m_UsedByEffector: 0
-  m_CompositeOperation: 0
-  m_CompositeOrder: 0
-  m_Offset: {x: -0.03675227, y: 0.6703703}
-  m_SpriteTilingProperty:
-    border: {x: 0, y: 0, z: 0, w: 0}
-    pivot: {x: 0.5, y: 0}
-    oldSize: {x: 1, y: 1.5}
-    newSize: {x: 1, y: 1.5}
-    adaptiveTilingThreshold: 0.5
-    drawMode: 0
-    adaptiveTiling: 0
-  m_AutoTiling: 0
-  m_Size: {x: 0.865242, y: 1.1202277}
-  m_EdgeRadius: 0
---- !u!114 &6525932923611293015
+--- !u!114 &5869872136590021004
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -202,99 +153,16 @@ MonoBehaviour:
   m_GameObject: {fileID: 943648227868954951}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 77a2760b796d47b5916ce9eb9d606d06, type: 3}
+  m_Script: {fileID: 11500000, guid: b20faee11c5c4e34a6c0ba550e4624d3, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ImprovedPlayerAnimationController
-  directionThreshold: 0.1
-  directionSmoothSpeed: 8
-  use8Directions: 1
-  useElevationBlending: 1
-  speedTransitionSmoothing: 6
-  bodyRenderer: {fileID: 0}
-  headRenderer: {fileID: 0}
-  armsRenderer: {fileID: 0}
-  useShadow: 1
-  shadowRenderer: {fileID: 2444315561270230668}
-  shadowOpacityRange: 0.3
---- !u!114 &1594084855912289901
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 943648227868954951}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 01877f889bde4905858b8b9d84e57ccd, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ImprovedPlayerController
-  moveSpeed: 5
-  acceleration: 15
-  stopDistance: 0.1
-  terrainGridSize: 1
-  canJumpTerrainLevels: 1
-  jumpHeight: 0.5
-  jumpDuration: 0.3
-  maxClimbHeight: 0.2
-  jumpCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  groundLayer: {fileID: 0}
-  grid: {fileID: 0}
-  worldGenerator: {fileID: 0}
-  avoidWater: 1
-  hoverIndicatorPrefab: {fileID: 0}
-  clickIndicatorPrefab: {fileID: 0}
-  indicatorFadeDuration: 0.5
-  animBlendSpeed: 8
-  spriteRenderer: {fileID: 0}
-  useCustomSorting: 1
-  sortingBaseY: 0
-  sortingScaleX: 0.01
-  sortingScaleY: 0.02
---- !u!114 &6240988340457876557
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 943648227868954951}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 514458f7a2ae4a5c906263a7452cb493, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::PlayerControllerSetup
-  autoSetupOnStart: 1
-  setupPreset: 0
-  worldGenerator: {fileID: 0}
-  grid: {fileID: 0}
-  groundLayer: {fileID: 0}
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerController
+  moveSpeed: 6
+  stepHeight: 1.2
+  jumpHeight: 2
+  gravity: -20
+  chunkManager: {fileID: 0}
   mainCamera: {fileID: 0}
-  hoverIndicatorPrefab: {fileID: 0}
-  clickIndicatorPrefab: {fileID: 0}
-  terrainMaterial: {fileID: 2100000, guid: 686b25eec18d629418e62012692e3e5b, type: 2}
-  autoFindComponents: 1
+  spriteRenderer: {fileID: 7371289006010394028}
 --- !u!1 &7980293087339208892
 GameObject:
   m_ObjectHideFlags: 0
@@ -309,6 +177,7 @@ GameObject:
   - component: {fileID: 4689335736795038833}
   - component: {fileID: 8576033736953320580}
   - component: {fileID: 1959144659932916184}
+  - component: {fileID: 1176678012601643838}
   m_Layer: 0
   m_Name: Shadow
   m_TagString: Untagged
@@ -376,8 +245,8 @@ SpriteRenderer:
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: -608764895
-  m_SortingLayer: 4
+  m_SortingLayerID: 1092082529
+  m_SortingLayer: 2
   m_SortingOrder: -1
   m_MaskInteraction: 0
   m_Sprite: {fileID: -2976837118148077081, guid: a556bf7b5dbcbf84288eeea49d9009d3, type: 3}
@@ -506,3 +375,22 @@ MonoBehaviour:
   sunMinAngle: 25
   sunMaxAngle: 80
   showShadowDebug: 0
+--- !u!114 &1176678012601643838
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7980293087339208892}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b20faee11c5c4e34a6c0ba550e4624d3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerController
+  moveSpeed: 6
+  stepHeight: 1.2
+  jumpHeight: 2
+  gravity: -20
+  chunkManager: {fileID: 0}
+  mainCamera: {fileID: 0}
+  spriteRenderer: {fileID: 0}

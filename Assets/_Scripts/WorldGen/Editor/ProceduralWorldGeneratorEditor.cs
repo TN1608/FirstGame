@@ -69,7 +69,7 @@ public class ProceduralWorldGeneratorEditor : Editor
         var s = gen.settings;
         _contPreview   = s.continentalnessNoise ? gen.GetNoisePreview(s.continentalnessNoise, PREVIEW_SIZE)            : null;
         _erosionPreview = s.erosionNoise         ? gen.GetNoisePreview(s.erosionNoise,         PREVIEW_SIZE)            : null;
-        _weirdPreview  = s.weirdnessNoise        ? gen.GetNoisePreview(s.weirdnessNoise,       PREVIEW_SIZE, applyRidgeFold: true) : null;
+        _weirdPreview  = s.weirdnessNoise        ? gen.GetNoisePreview(s.weirdnessNoise,       PREVIEW_SIZE) : null;
         _tempPreview   = s.temperatureNoise      ? gen.GetNoisePreview(s.temperatureNoise,     PREVIEW_SIZE)            : null;
         _humPreview    = s.humidityNoise         ? gen.GetNoisePreview(s.humidityNoise,        PREVIEW_SIZE)            : null;
         _detailPreview = s.detailNoise           ? gen.GetNoisePreview(s.detailNoise,          PREVIEW_SIZE)            : null;

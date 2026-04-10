@@ -14,9 +14,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorldGeneratorSettings
   chunkSize: 16
   renderDistanceInChunks: 3
-  baseHeight: 10
-  heightAmplitude: 20
-  seaLevel: 10
+  baseHeight: 2
+  heightAmplitude: 4
+  seaLevel: 2
   continentalnessNoise: {fileID: 11400000, guid: f51654686f457f049a456a2b5b5cfa72, type: 2}
   erosionNoise: {fileID: 11400000, guid: 671d82d4d86fc3844aa4d2fb3fa16fce, type: 2}
   weirdnessNoise: {fileID: 11400000, guid: 0f5846b6d5c3c224f8e516b480550b3a, type: 2}
@@ -30,7 +30,7 @@ MonoBehaviour:
   decorationTilemap: {fileID: 0}
   defaultGroundTile: {fileID: 11400000, guid: 66a084bcd84c0e84295fe3c6c0486607, type: 2}
   defaultWaterTile: {fileID: 11400000, guid: 04b6f548f6a4dfc47abe106767dc2fe0, type: 2}
-  colorStepDarken: 0.06
+  colorStepDarken: 0.056
   setStaticAfterGeneration: 1
   stairSpawnChance: 0.1
   stairTile: {fileID: 0}

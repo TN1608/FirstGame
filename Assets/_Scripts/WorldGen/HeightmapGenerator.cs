@@ -1,18 +1,33 @@
 using UnityEngine;
 
 /// <summary>
-/// Generates all noise maps and final integer heightmap for a ChunkData.
-/// Pure computation - no Tilemap calls, safe to run on background thread.
+/// Generates heightmap for IsometricZAsY single-tilemap approach.
+///
+/// KEY CONSTRAINT — Z-as-Y tile alignment:
+///   Unity offsets each tile vertically by: screenY += tileZ * cellSize.Y
+///   With cellSize.Y = 0.5, each Z step = 0.5 world units on screen.
+///   A tile sprite is 1 cell tall = 0.5 world units (PPU=32, sprite=16px tall top face).
+///
+///   Therefore: MAX usable Z range = sprite_pixel_height / (PPU * cellSize.Y)
+///   For PPU=32, cellSize.Y=0.5: max meaningful Z difference ≈ 8-10 levels
+///   before tiles start visually disconnecting from the grid.
+///
+///   CORRECT SETTINGS:
+///     baseHeight   = 2
+///     heightAmplitude = 4   → range 0..6  (safe, clean steps)
+///     seaLevel     = 2
+///
+///   WRONG (current):
+///     baseHeight=10, amplitude=20 → range -10..30 (tiles fly off grid)
 /// </summary>
 public static class HeightmapGenerator
 {
     public static void Generate(ChunkData chunk, WorldGeneratorSettings settings)
     {
-        var s = settings;
-        Vector2Int origin = chunk.WorldOrigin;
-        int size = chunk.chunkSize;
+        var s      = settings;
+        var origin = chunk.WorldOrigin;
+        int size   = chunk.chunkSize;
 
-        // Seed all noise offsets once per world generation call
         InitNoiseOffsets(s);
 
         for (int lx = 0; lx < size; lx++)
@@ -21,55 +36,50 @@ public static class HeightmapGenerator
             float wx = origin.x + lx;
             float wy = origin.y + ly;
 
-            // --- Sample each noise layer ---
-            float cont    = NoiseSampler.Sample(wx, wy, s.continentalnessNoise);
-            float erosion = NoiseSampler.Sample(wx, wy, s.erosionNoise);
-            float weird   = NoiseSampler.Sample(wx, wy, s.weirdnessNoise);
-            float temp    = NoiseSampler.Sample(wx, wy, s.temperatureNoise);
-            float hum     = NoiseSampler.Sample(wx, wy, s.humidityNoise);
-            float detail  = NoiseSampler.Sample(wx, wy, s.detailNoise);
-            float decoN   = NoiseSampler.Sample(wx, wy, s.decorationNoise);
+            // Sample noise layers
+            float cont   = Sample(wx, wy, s.continentalnessNoise);
+            float erosion= Sample(wx, wy, s.erosionNoise);
+            float weird  = Sample(wx, wy, s.weirdnessNoise);
+            float temp   = Sample(wx, wy, s.temperatureNoise);
+            float hum    = Sample(wx, wy, s.humidityNoise);
+            float detail = Sample(wx, wy, s.detailNoise);
+            float decoN  = Sample(wx, wy, s.decorationNoise);
 
-            // Peaks & Valleys = ridges folded from weirdness
             float peaksValleys = NoiseSampler.RidgesFolded(weird);
 
-            // Store raw maps
             chunk.continentalnessMap[lx, ly] = cont;
-            chunk.erosionMap[lx, ly]         = erosion;
-            chunk.weirdnessMap[lx, ly]       = peaksValleys;
-            chunk.temperatureMap[lx, ly]     = temp;
-            chunk.humidityMap[lx, ly]        = hum;
+            chunk.erosionMap        [lx, ly] = erosion;
+            chunk.weirdnessMap      [lx, ly] = peaksValleys;
+            chunk.temperatureMap    [lx, ly] = temp;
+            chunk.humidityMap       [lx, ly] = hum;
             chunk.decorationNoiseMap[lx, ly] = decoN;
 
-            // --- Combine into final height ---
-            // Continentalness: high = tall land, low = ocean
-            // Erosion: high = flat (eroded), low = mountainous
-            // Erosion inverted: 1 - erosion amplifies height variation
-            float combinedHeight =
-                cont    * s.continentalnessWeight +
-                (1f - erosion) * s.erosionWeight +
-                peaksValleys * s.peaksValleysWeight +
-                detail  * s.detailWeight;
-
-            // Normalize by total weight
+            // Combine noise layers → 0..1
             float totalWeight = s.continentalnessWeight + s.erosionWeight
                               + s.peaksValleysWeight    + s.detailWeight;
-            combinedHeight /= Mathf.Max(totalWeight, 0.001f);
 
-            chunk.heightMap[lx, ly] = combinedHeight;
+            float combined =
+                  cont          * s.continentalnessWeight
+                + (1f - erosion)* s.erosionWeight
+                + peaksValleys  * s.peaksValleysWeight
+                + detail        * s.detailWeight;
 
-            // Map 0-1 → integer tile height
-            // 0 = baseHeight - amplitude, 1 = baseHeight + amplitude
-            int tileH = Mathf.RoundToInt(
-                s.baseHeight + (combinedHeight * 2f - 1f) * s.heightAmplitude
+            combined = combined / Mathf.Max(totalWeight, 0.001f); // → 0..1
+
+            chunk.heightMap[lx, ly] = combined;
+
+            // Map 0..1 → integer height
+            // combined=0   → baseHeight - amplitude  (lowest)
+            // combined=0.5 → baseHeight              (sea level)
+            // combined=1   → baseHeight + amplitude  (highest)
+            int h = Mathf.RoundToInt(
+                s.baseHeight + (combined * 2f - 1f) * s.heightAmplitude
             );
-            tileH = Mathf.Max(0, tileH);
-            chunk.tileHeights[lx, ly] = tileH;
+            h = Mathf.Clamp(h, 0, s.baseHeight + s.heightAmplitude);
 
-            // Water: anything at or below seaLevel
-            chunk.isWater[lx, ly] = tileH <= s.seaLevel;
+            chunk.tileHeights[lx, ly] = h;
+            chunk.isWater    [lx, ly] = h <= s.seaLevel;
 
-            // Biome lookup
             if (s.biomeSettings != null)
                 chunk.biomeMap[lx, ly] = s.biomeSettings.GetBiome(temp, hum, cont);
         }
@@ -77,28 +87,37 @@ public static class HeightmapGenerator
         chunk.MarkGenerated();
     }
 
-    // Call once before generating a new world so offsets are stable per seed
+    static float Sample(float wx, float wy, NoiseSettings ns)
+    {
+        if (ns == null) return 0.5f;
+        return NoiseSampler.Sample(wx, wy, ns);
+    }
+
+    // ── Init offsets once per seed ─────────────────────────────────────
+
     static int _lastSeed = int.MinValue;
+
     static void InitNoiseOffsets(WorldGeneratorSettings s)
     {
         int seed = s.continentalnessNoise ? s.continentalnessNoise.seed : 0;
         if (seed == _lastSeed) return;
         _lastSeed = seed;
 
-        void Init(NoiseSettings n, int offset)
-        {
-            if (n == null) return;
-            var rng = new System.Random(n.seed + offset);
-            n.offsetX = rng.Next(-100000, 100000);
-            n.offsetY = rng.Next(-100000, 100000);
-        }
+        Init(s.continentalnessNoise, seed, 0);
+        Init(s.erosionNoise,         seed, 1);
+        Init(s.weirdnessNoise,       seed, 2);
+        Init(s.temperatureNoise,     seed, 3);
+        Init(s.humidityNoise,        seed, 4);
+        Init(s.detailNoise,          seed, 5);
+        Init(s.decorationNoise,      seed, 6);
+    }
 
-        Init(s.continentalnessNoise, 0);
-        Init(s.erosionNoise,         1);
-        Init(s.weirdnessNoise,       2);
-        Init(s.temperatureNoise,     3);
-        Init(s.humidityNoise,        4);
-        Init(s.detailNoise,          5);
-        Init(s.decorationNoise,      6);
+    static void Init(NoiseSettings n, int baseSeed, int slot)
+    {
+        if (n == null) return;
+        var mixSeed = (unchecked((int)2654435761) * baseSeed) ^ slot;
+        var rng   = new System.Random(mixSeed);
+        n.offsetX = rng.Next(-100000, 100000);
+        n.offsetY = rng.Next(-100000, 100000);
     }
 }

@@ -21,13 +21,13 @@ MonoBehaviour:
     minContinentalness: 0
     maxContinentalness: 0
     surfaceTile: {fileID: 11400000, guid: 66a084bcd84c0e84295fe3c6c0486607, type: 2}
-    subsurfaceTile: {fileID: 11400000, guid: a7f5f34e1faef944982fd97bce66de38, type: 2}
+    subsurfaceTile: {fileID: 0}
     waterTile: {fileID: 11400000, guid: 04b6f548f6a4dfc47abe106767dc2fe0, type: 2}
     decorationPrefabs:
     - {fileID: 7690844300644022823, guid: d8f4bdab9fc017a4f9674d7d4204ec68, type: 3}
     - {fileID: 3401681954619008031, guid: 6f56127b7ff9c10478f57ab7614b05df, type: 3}
     - {fileID: 2604796753182621655, guid: 91662a937d951524f93756b306d760bc, type: 3}
-    decorationDensity: 0.206
+    decorationDensity: 0.338
     biomeTint: {r: 0, g: 0, b: 0, a: 0}
   defaultTile: {fileID: 11400000, guid: 66a084bcd84c0e84295fe3c6c0486607, type: 2}
   waterTile: {fileID: 11400000, guid: 04b6f548f6a4dfc47abe106767dc2fe0, type: 2}

@@ -1,330 +1,282 @@
+using System.Collections;
 using UnityEngine;
-using System.Collections.Generic;
-#if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
-#endif
 
 /// <summary>
-/// Player Controller cho isometric 2.5D game
-/// - Click để di chuyển
-/// - Auto jump khi gặp multi-level terrain
-/// - Tuân theo terrain height
+/// Isometric 2.5D Player Controller — New Input System only.
+///
+/// Controls:
+///   WASD / Arrow Keys  → Move in isometric world directions
+///   Space              → Jump (parabolic arc over terrain)
+///   E                  → Interact (keyboard)
+///   Left Mouse Click   → Interact (mouse, world-space raycast)
+///
+/// No legacy UnityEngine.Input calls — all via InputActionReference or
+/// direct Keyboard/Mouse device reads from Input System.
+///
+/// Setup in Inspector:
+///   Assign Move / Jump / Interact / MouseInteract InputActionReferences
+///   from your Input Action Asset, OR leave them null to use the
+///   built-in Keyboard/Mouse fallback (no asset needed).
 /// </summary>
+[RequireComponent(typeof(Rigidbody2D))]
 public class PlayerController : MonoBehaviour
 {
-    [System.Serializable]
-    public class MovementSettings
-    {
-        public float moveSpeed = 5f;
-        public float jumpHeight = 2f;
-        public float gravityScale = 1f;
-        public float stepHeight = 1f;          // Chiều cao max để auto step lên
-        public float groundDrag = 0.1f;
-    }
+    // ── Inspector ─────────────────────────────────────────────────────────
 
-    [System.Serializable]
-    public class AnimationSettings
-    {
-        public bool useAnimator = false;
-        public Animator animator;
-        public string moveSpeedParam = "MoveSpeed";
-        public string jumpParam = "Jump";
-    }
+    [Header("Movement")]
+    public float moveSpeed     = 5f;
+    public float acceleration  = 18f;
+    public float deceleration  = 24f;
 
-    [Header("Settings")]
-    public MovementSettings moveSettings = new MovementSettings();
-    public AnimationSettings animSettings = new AnimationSettings();
-    public ChunkManager chunkManager;
-    public Camera mainCamera;
+    [Header("Jump")]
+    public float jumpArcHeight = 0.6f;   // visual Z units at peak
+    public float jumpDuration  = 0.32f;
+
+    [Header("Step / Terrain")]
+    public float stepHeight         = 1.2f;   // auto-step if height diff ≤ this
+    public float heightFollowSpeed  = 12f;
+    public float heightVisualScale  = 0.05f;  // world-Z offset per tile height unit
+
+    [Header("Interaction")]
+    public float interactRange  = 1.5f;
+    public LayerMask interactLayer = ~0;
+
+    [Header("Input Action References (optional)")]
+    [Tooltip("Leave null to use built-in WASD / Space / E / LMB fallback.")]
+    public InputActionReference moveAction;
+    public InputActionReference jumpAction;
+    public InputActionReference interactKeyAction;
+    public InputActionReference interactMouseAction;
 
     [Header("References")]
-    public Rigidbody2D rb;
-    public SpriteRenderer spriteRenderer;
+    public ChunkManager    chunkManager;
+    public Camera          mainCamera;
+    public SpriteRenderer  spriteRenderer;
 
-    private Vector3 moveTarget;
-    private bool isMoving = false;
-    private bool isJumping = false;
-    private Vector3 velocity = Vector3.zero;
-    private float currentHeight = 0f;
-    private Queue<Vector3> pathQueue = new Queue<Vector3>();
+    // ── Private ───────────────────────────────────────────────────────────
 
-    private void Start()
+    private Rigidbody2D _rb;
+    private Vector2     _moveInput;
+    private Vector2     _velocity;
+    private float       _visualZ;
+    private bool        _grounded     = true;
+    private bool        _jumpConsumed = false;
+
+    // Isometric axis vectors (WASD → isometric world XY)
+    //   D = right-down,  A = left-up
+    //   W = right-up,    S = left-down
+    static readonly Vector2 IsoE = new Vector2( 1f, -0.5f).normalized;   // D
+    static readonly Vector2 IsoN = new Vector2( 1f,  0.5f).normalized;   // W
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────
+
+    void Awake()
     {
-        if (rb == null)
-            rb = GetComponent<Rigidbody2D>();
-        if (spriteRenderer == null)
-            spriteRenderer = GetComponent<SpriteRenderer>();
-        if (mainCamera == null)
-            mainCamera = Camera.main;
-        if (chunkManager == null)
-            chunkManager = FindObjectOfType<ChunkManager>();
+        _rb = GetComponent<Rigidbody2D>();
+        _rb.gravityScale   = 0f;    // gravity handled manually via terrain height
+        _rb.freezeRotation = true;
+        _rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
 
-        currentHeight = chunkManager.GetHeightAtPosition(transform.position);
+        if (mainCamera   == null) mainCamera   = Camera.main;
+        if (chunkManager == null) chunkManager = FindFirstObjectByType<ChunkManager>();
+
+        EnableActions();
     }
 
-    private void Update()
+    void OnEnable()  => EnableActions();
+    void OnDisable() => DisableActions();
+
+    void Update()
     {
-        // Handle input
-        HandleMouseInput();
+        ReadMovementInput();
+        ReadActionInput();
 
-        // Update chunks dựa vào player position
-        chunkManager.LoadChunksAroundPosition(transform.position);
-
-        // Update animation
-        UpdateAnimation();
+        if (chunkManager != null)
+            chunkManager.LoadChunksAroundPosition(transform.position);
     }
 
-    private void FixedUpdate()
+    void FixedUpdate()
     {
-        // Movement logic
-        UpdateMovement();
-
-        // Apply gravity
-        ApplyGravity();
-
-        // Update height
-        UpdateHeight();
+        ApplyMovement();
+        FollowTerrain();
     }
 
-    /// <summary>
-    /// Xử lý input chuột
-    /// </summary>
-    private void HandleMouseInput()
+    // ── Input ─────────────────────────────────────────────────────────────
+
+    void ReadMovementInput()
     {
-        if (TryGetMouseClickScreenPosition(out Vector3 clickScreenPos))
+        Vector2 raw = Vector2.zero;
+
+        if (moveAction?.action != null)
         {
-            Vector3 mouseWorldPos = mainCamera.ScreenToWorldPoint(clickScreenPos);
-            mouseWorldPos.z = 0;
-
-            // Tính Z position dựa vào isometric view
-            // Chuyển đổi 2D screen coord thành isometric world coord
-            Vector3 targetPos = ConvertIsometricScreenToWorld(clickScreenPos);
-            
-            // Thiết lập target để di chuyển
-            SetMoveTarget(targetPos);
-        }
-    }
-
-    /// <summary>
-    /// Returns true only on the frame left mouse is pressed.
-    /// Uses the new Input System when enabled, otherwise legacy input.
-    /// </summary>
-    private bool TryGetMouseClickScreenPosition(out Vector3 screenPos)
-    {
-        screenPos = Vector3.zero;
-
-#if ENABLE_INPUT_SYSTEM
-        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
-        {
-            Vector2 pos = Mouse.current.position.ReadValue();
-            screenPos = new Vector3(pos.x, pos.y, 0f);
-            return true;
-        }
-#elif ENABLE_LEGACY_INPUT_MANAGER
-        if (Input.GetMouseButtonDown(0))
-        {
-            Vector3 pos = Input.mousePosition;
-            screenPos = new Vector3(pos.x, pos.y, 0f);
-            return true;
-        }
-#endif
-
-        return false;
-    }
-
-    /// <summary>
-    /// Chuyển đổi isometric screen position sang world position
-    /// </summary>
-    private Vector3 ConvertIsometricScreenToWorld(Vector3 screenPos)
-    {
-        Vector3 worldPos = mainCamera.ScreenToWorldPoint(screenPos);
-        
-        // Isometric conversion (phụ thuộc vào setup của bạn)
-        // Nếu dùng standard isometric: 
-        // - Screen X = (World X - World Y) / sqrt(2)
-        // - Screen Y = (World X + World Y) / (2 * sqrt(2))
-        
-        // Reverse:
-        float screenX = worldPos.x;
-        float screenY = worldPos.y;
-        
-        float sqrt2 = Mathf.Sqrt(2);
-        float worldX = (screenX / sqrt2 + screenY / sqrt2) / 2;
-        float worldY = (-screenX / sqrt2 + screenY / sqrt2) / 2;
-        
-        return new Vector3(worldX, worldY, 0);
-    }
-
-    /// <summary>
-    /// Đặt target di chuyển
-    /// </summary>
-    public void SetMoveTarget(Vector3 target)
-    {
-        moveTarget = target;
-        isMoving = true;
-        pathQueue.Clear();
-        
-        // Có thể thêm A* pathfinding tại đây
-        pathQueue.Enqueue(target);
-    }
-
-    /// <summary>
-    /// Cập nhật di chuyển
-    /// </summary>
-    private void UpdateMovement()
-    {
-        if (!isMoving || pathQueue.Count == 0)
-        {
-            velocity.x = Mathf.Lerp(velocity.x, 0, moveSettings.groundDrag);
-            velocity.y = Mathf.Lerp(velocity.y, 0, moveSettings.groundDrag);
-            return;
-        }
-
-        Vector3 currentTarget = pathQueue.Peek();
-        Vector3 direction = (currentTarget - transform.position).normalized;
-        
-        // Kiểm tra nếu tới gần target
-        if (Vector3.Distance(transform.position, currentTarget) < 0.5f)
-        {
-            pathQueue.Dequeue();
-            
-            if (pathQueue.Count == 0)
-            {
-                isMoving = false;
-                velocity.x = 0;
-                velocity.y = 0;
-            }
-            return;
-        }
-
-        // Di chuyển theo hướng
-        velocity.x = direction.x * moveSettings.moveSpeed;
-        velocity.y = direction.y * moveSettings.moveSpeed;
-
-        // Flip sprite nếu cần
-        if (spriteRenderer != null && direction.x != 0)
-        {
-            spriteRenderer.flipX = direction.x < 0;
-        }
-
-        // Check auto jump
-        CheckAndPerformAutoJump(currentTarget);
-    }
-
-    /// <summary>
-    /// Kiểm tra và tự động jump khi gặp bất kỳ obstacle
-    /// </summary>
-    private void CheckAndPerformAutoJump(Vector3 targetPos)
-    {
-        float targetHeight = chunkManager.GetHeightAtPosition(targetPos);
-        float heightDifference = targetHeight - currentHeight;
-
-        // Nếu mục tiêu ở trên và trong step height, jump
-        if (heightDifference > 0 && heightDifference <= moveSettings.stepHeight)
-        {
-            if (!isJumping)
-            {
-                PerformAutoJump(heightDifference);
-            }
-        }
-        // Nếu khác quá cao, không thể climb
-        else if (heightDifference > moveSettings.stepHeight)
-        {
-            // Block movement hoặc tìm đường khác
-            velocity.x = 0;
-            velocity.y = 0;
-        }
-    }
-
-    /// <summary>
-    /// Thực hiện auto jump
-    /// </summary>
-    private void PerformAutoJump(float targetHeightDiff)
-    {
-        if (isJumping)
-            return;
-
-        isJumping = true;
-        
-        // Tính jump velocity để đạt đúng target height
-        float jumpVelocity = Mathf.Sqrt(2 * moveSettings.jumpHeight * Mathf.Abs(Physics.gravity.y) * moveSettings.gravityScale);
-        velocity.z = jumpVelocity;
-
-        if (animSettings.useAnimator && animSettings.animator != null)
-        {
-            animSettings.animator.SetTrigger(animSettings.jumpParam);
-        }
-    }
-
-    /// <summary>
-    /// Cập nhật height dựa vào terrain
-    /// </summary>
-    private void UpdateHeight()
-    {
-        float targetHeight = chunkManager.GetHeightAtPosition(transform.position);
-        
-        // Smooth transition về target height
-        float heightDifference = targetHeight - currentHeight;
-        
-        if (Mathf.Abs(heightDifference) > 0.01f)
-        {
-            currentHeight = Mathf.Lerp(currentHeight, targetHeight, Time.deltaTime * 5f);
+            raw = moveAction.action.ReadValue<Vector2>();
         }
         else
         {
-            currentHeight = targetHeight;
-            isJumping = false;
+            // Built-in fallback — Keyboard device, no legacy Input class
+            var kb = Keyboard.current;
+            if (kb == null) return;
+
+            if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) raw.x += 1f;
+            if (kb.aKey.isPressed || kb.leftArrowKey.isPressed)  raw.x -= 1f;
+            if (kb.wKey.isPressed || kb.upArrowKey.isPressed)    raw.y += 1f;
+            if (kb.sKey.isPressed || kb.downArrowKey.isPressed)  raw.y -= 1f;
         }
 
-        // Update position Z dựa vào height
-        Vector3 newPos = transform.position;
-        newPos.z = currentHeight * 0.1f; // Scale để visual effect
-        transform.position = newPos;
+        // Convert WASD screen-space to isometric world-space
+        // D/A → along IsoE axis;  W/S → along IsoN axis
+        _moveInput  = raw.x * IsoE + raw.y * IsoN;
+        if (_moveInput.sqrMagnitude > 1f) _moveInput.Normalize();
+
+        // Flip sprite on horizontal direction
+        if (spriteRenderer != null && Mathf.Abs(_moveInput.x) > 0.05f)
+            spriteRenderer.flipX = _moveInput.x < 0f;
     }
 
-    /// <summary>
-    /// Áp dụng gravity
-    /// </summary>
-    private void ApplyGravity()
+    void ReadActionInput()
     {
-        if (isJumping)
+        bool jumpPressed      = false;
+        bool interactPressed  = false;
+        bool mousePressed     = false;
+
+        var kb    = Keyboard.current;
+        var mouse = Mouse.current;
+
+        // Jump
+        if (jumpAction?.action != null)
+            jumpPressed = jumpAction.action.WasPressedThisFrame();
+        else if (kb != null)
+            jumpPressed = kb.spaceKey.wasPressedThisFrame;
+
+        // Keyboard interact (E)
+        if (interactKeyAction?.action != null)
+            interactPressed = interactKeyAction.action.WasPressedThisFrame();
+        else if (kb != null)
+            interactPressed = kb.eKey.wasPressedThisFrame;
+
+        // Mouse interact (Left Click)
+        if (interactMouseAction?.action != null)
+            mousePressed = interactMouseAction.action.WasPressedThisFrame();
+        else if (mouse != null)
+            mousePressed = mouse.leftButton.wasPressedThisFrame;
+
+        if (jumpPressed && _grounded && !_jumpConsumed)
         {
-            velocity.z -= Physics.gravity.y * moveSettings.gravityScale * Time.deltaTime;
+            _jumpConsumed = true;
+            StartCoroutine(JumpArc());
         }
 
-        // Apply velocity
-        Vector3 newPos = transform.position;
-        newPos.x += velocity.x * Time.deltaTime;
-        newPos.y += velocity.y * Time.deltaTime;
-        newPos.z += velocity.z * Time.deltaTime;
-        
-        transform.position = newPos;
+        if (interactPressed) TryInteract(useMousePos: false);
+        if (mousePressed)    TryInteract(useMousePos: true);
     }
 
-    /// <summary>
-    /// Cập nhật animation
-    /// </summary>
-    private void UpdateAnimation()
+    // ── Movement ──────────────────────────────────────────────────────────
+
+    void ApplyMovement()
     {
-        if (!animSettings.useAnimator || animSettings.animator == null)
-            return;
-
-        float moveSpeed = new Vector2(velocity.x, velocity.y).magnitude;
-        animSettings.animator.SetFloat(animSettings.moveSpeedParam, moveSpeed);
+        Vector2 target = _moveInput * moveSpeed;
+        float   rate   = _moveInput.sqrMagnitude > 0.01f ? acceleration : deceleration;
+        _velocity      = Vector2.MoveTowards(_velocity, target, rate * Time.fixedDeltaTime);
+        _rb.linearVelocity = _velocity;
     }
 
-    /// <summary>
-    /// Debug
-    /// </summary>
-    private void OnDrawGizmosSelected()
+    void FollowTerrain()
     {
-        if (!isMoving)
-            return;
+        if (chunkManager == null || !_grounded) return;
 
-        Gizmos.color = Color.red;
-        Gizmos.DrawWireSphere(moveTarget, 0.5f);
-        
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawLine(transform.position, moveTarget);
+        float terrainH  = chunkManager.GetHeightAtPosition(transform.position);
+        float targetZ   = terrainH * heightVisualScale;
+        _visualZ        = Mathf.Lerp(_visualZ, targetZ, Time.fixedDeltaTime * heightFollowSpeed);
+
+        var pos  = transform.position;
+        pos.z    = _visualZ;
+        transform.position = pos;
     }
+
+    IEnumerator JumpArc()
+    {
+        _grounded = false;
+        float startZ   = _visualZ;
+        float elapsed  = 0f;
+
+        while (elapsed < jumpDuration)
+        {
+            elapsed  += Time.deltaTime;
+            float t   = elapsed / jumpDuration;
+            // Parabola: peaks at t=0.5
+            float arc = 4f * t * (1f - t);
+            _visualZ  = startZ + arc * jumpArcHeight;
+
+            var pos  = transform.position;
+            pos.z    = _visualZ;
+            transform.position = pos;
+
+            yield return null;
+        }
+
+        _grounded     = true;
+        _jumpConsumed = false;
+    }
+
+    // ── Interact ──────────────────────────────────────────────────────────
+
+    void TryInteract(bool useMousePos)
+    {
+        Vector2 origin;
+        Vector2 dir;
+
+        if (useMousePos && mainCamera != null && Mouse.current != null)
+        {
+            // Mouse position → world space (ignore Z)
+            Vector3 wp = mainCamera.ScreenToWorldPoint(
+                new Vector3(Mouse.current.position.ReadValue().x,
+                            Mouse.current.position.ReadValue().y, 10f));
+            origin = transform.position;
+            dir    = ((Vector2)wp - origin).normalized;
+        }
+        else
+        {
+            origin = transform.position;
+            dir    = _moveInput.sqrMagnitude > 0.01f ? _moveInput : Vector2.right;
+        }
+
+        RaycastHit2D hit = Physics2D.Raycast(origin, dir, interactRange, interactLayer);
+        if (hit.collider != null)
+        {
+            var interactable = hit.collider.GetComponent<IInteractable>();
+            interactable?.Interact(gameObject);
+            Debug.Log($"[Player] Interacted with {hit.collider.name}");
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    void EnableActions()
+    {
+        moveAction?.action?.Enable();
+        jumpAction?.action?.Enable();
+        interactKeyAction?.action?.Enable();
+        interactMouseAction?.action?.Enable();
+    }
+
+    void DisableActions()
+    {
+        moveAction?.action?.Disable();
+        jumpAction?.action?.Disable();
+        interactKeyAction?.action?.Disable();
+        interactMouseAction?.action?.Disable();
+    }
+
+    void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.cyan;
+        Gizmos.DrawWireSphere(transform.position, interactRange);
+    }
+}
+
+/// <summary>Implement on any GameObject to make it interactable.</summary>
+public interface IInteractable
+{
+    void Interact(GameObject instigator);
 }

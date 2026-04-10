@@ -1,203 +1,125 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 
 /// <summary>
-/// Paints a fully-computed ChunkData onto Unity Tilemaps.
+/// Z-AS-Y CORRECT APPROACH
 ///
-/// Z-AS-Y APPROACH (recommended):
-///   Grid: Cell Swizzle = XYZ, Tilemap Orientation = IsometricZAsY
-///   We place ALL terrain in ONE Tilemap using 3D cell positions (x, y, z).
-///   Unity sorts by -(y*2 + z) automatically — higher Z = renders on top.
-///   No need for one Tilemap per height level.
+/// KEY INSIGHT:
+/// In Unity IsometricZAsY mode, each grid cell (x, y) can hold tiles at
+/// multiple Z values. Unity renders ALL of them, sorted by -(y*2 + z).
+/// A tile at (x, y, z=5) renders ABOVE a tile at (x, y, z=3).
+/// BUT — two tiles at the same (x,y) with different Z appear at different
+/// VISUAL HEIGHTS on screen (higher Z = higher on screen).
 ///
-/// COLUMN APPROACH (stacked tilemap per level):
-///   For each height h we set tiles at (x, y) on Tilemap[h].
-///   Simpler tile setup but requires cloning many Tilemap GameObjects.
-///   Enabled by STACKED_TILEMAPS define below.
+/// CORRECT TERRAIN PAINTING:
+/// For each cell (x, y) with height h:
+///   → Place ONE surface tile at (x, y, h)   ← the top face
+///   → DO NOT place column tiles below it
+///      (Z-as-Y doesn't show a "side" — it just shows tiles floating higher)
+///
+/// The "step" / cliff visual is created by NEIGHBOURING cells having
+/// different heights. When cell A at h=5 is next to cell B at h=3,
+/// Unity's isometric sorting makes A appear visually above B — that IS
+/// the terrain depth effect. No extra side tiles needed.
+///
+/// The reference image (Image 8) confirms: flat top per cell, clean steps
+/// between height levels, no overlapping or diagonal stacking artifacts.
 /// </summary>
 public static class TilemapPainter
 {
-    // -------------------------------------------------------
-    // Switch between approaches:
-    // #define STACKED_TILEMAPS   → one tilemap per level (old way)
-    // Default: Z-as-Y single tilemap
-    // -------------------------------------------------------
-
-    public static void Paint(ChunkData chunk, WorldGeneratorSettings settings,
-                             TilemapColumnManager columnManager = null)
-    {
-#if STACKED_TILEMAPS
-        PaintStacked(chunk, settings, columnManager);
-#else
-        PaintZAsY(chunk, settings);
-#endif
-    }
-
-    // -------------------------------------------------------
-    // Z-AS-Y APPROACH — single Tilemap, 3D cell positions
-    // -------------------------------------------------------
-    static void PaintZAsY(ChunkData chunk, WorldGeneratorSettings s)
+    public static void Paint(ChunkData chunk, WorldGeneratorSettings s)
     {
         if (s.terrainTilemap == null)
         {
-            Debug.LogWarning("[TilemapPainter] terrainTilemap is null.");
+            Debug.LogError("[TilemapPainter] terrainTilemap is null.");
             return;
         }
 
-        var terrain    = s.terrainTilemap;
-        var water      = s.waterTilemap;
-        var decoration = s.decorationTilemap;
-
         Vector2Int origin = chunk.WorldOrigin;
-        int size = chunk.chunkSize;
+        int        size   = chunk.chunkSize;
 
-        // Batch set for performance
-        var positions = new System.Collections.Generic.List<Vector3Int>();
-        var tiles     = new System.Collections.Generic.List<TileBase>();
+        // ── Terrain: one tile per cell at its height Z ───────────────────
+        var terrainPos   = new Vector3Int[size * size];
+        var terrainTiles = new TileBase [size * size];
 
+        // ── Water: flat water surface at seaLevel ────────────────────────
+        var waterPos     = new List<Vector3Int>(size * size / 4);
+        var waterTiles   = new List<TileBase>  (size * size / 4);
+
+        int idx = 0;
         for (int lx = 0; lx < size; lx++)
         for (int ly = 0; ly < size; ly++)
         {
-            int wx = origin.x + lx;
-            int wy = origin.y + ly;
-            int h  = chunk.tileHeights[lx, ly];
-            bool isWater = chunk.isWater[lx, ly];
-
+            int wx    = origin.x + lx;
+            int wy    = origin.y + ly;
+            int h     = chunk.tileHeights[lx, ly];
             var biome = chunk.biomeMap[lx, ly];
+
+            bool isWater = chunk.isWater[lx, ly];
 
             if (isWater)
             {
-                // Water sits at seaLevel Z
-                if (water != null)
+                // Terrain floor tile at actual height (visible under shallow water)
+                TileBase groundUnder = biome?.subsurfaceTile ?? s.defaultGroundTile;
+                terrainPos[idx]   = new Vector3Int(wx, wy, h);
+                terrainTiles[idx] = groundUnder;
+                idx++;
+
+                // Water surface at seaLevel Z
+                TileBase wt = biome?.waterTile ?? s.defaultWaterTile;
+                if (wt != null)
                 {
-                    TileBase wt = biome?.waterTile ?? s.defaultWaterTile;
-                    if (wt != null)
-                        water.SetTile(new Vector3Int(wx, wy, s.seaLevel), wt);
-                }
-                // Still place ground under water using subsurface tile
-                for (int col = 0; col <= h; col++)
-                {
-                    TileBase t = biome?.subsurfaceTile ?? s.defaultGroundTile;
-                    if (t != null)
-                        terrain.SetTile(new Vector3Int(wx, wy, col), t);
+                    waterPos.Add(new Vector3Int(wx, wy, s.seaLevel));
+                    waterTiles.Add(wt);
                 }
             }
             else
             {
-                // Surface tile (top)
-                TileBase surfTile = biome?.surfaceTile ?? s.defaultGroundTile;
-                TileBase subTile  = biome?.subsurfaceTile ?? s.defaultGroundTile;
-
-                // Place column: subsurface from 0 to h-1, surface at h
-                for (int col = 0; col < h; col++)
-                {
-                    if (subTile != null)
-                        terrain.SetTile(new Vector3Int(wx, wy, col), subTile);
-                }
-                if (surfTile != null)
-                    terrain.SetTile(new Vector3Int(wx, wy, h), surfTile);
-
-                // Stairs: place stair tile between neighboring height differences
-                // (check right neighbour within chunk bounds)
-                if (s.stairTile != null && lx + 1 < size)
-                {
-                    int nh = chunk.tileHeights[lx + 1, ly];
-                    if (Mathf.Abs(h - nh) == 1 && Random.value < s.stairSpawnChance)
-                        terrain.SetTile(new Vector3Int(wx, wy, h), s.stairTile);
-                }
-
-                // Decoration
-                if (decoration != null && biome != null
-                    && chunk.decorationNoiseMap[lx, ly] < biome.decorationDensity)
-                {
-                    TileBase dt = biome.surfaceTile; // placeholder; use prefab spawn instead
-                    // In a real project: Instantiate biome.decorationPrefabs[random] at worldPos
-                }
+                // Land: surface tile at height h — ONE tile per cell
+                TileBase surf = biome?.surfaceTile ?? s.defaultGroundTile;
+                terrainPos[idx]   = new Vector3Int(wx, wy, h);
+                terrainTiles[idx] = surf;
+                idx++;
             }
         }
 
-        // Apply darken color to lower tiles
-        ApplyColorDarken(terrain, chunk, s);
+        // Batch set — much faster than individual SetTile calls
+        s.terrainTilemap.SetTiles(terrainPos, terrainTiles);
 
-        if (s.setStaticAfterGeneration)
-            UnityEngine.SceneManagement.SceneManager.GetActiveScene()
-                .GetRootGameObjects(); // noop — call StaticBatchingUtility.Combine in production
+        if (s.waterTilemap != null && waterPos.Count > 0)
+            s.waterTilemap.SetTiles(waterPos.ToArray(), waterTiles.ToArray());
     }
 
-    static void ApplyColorDarken(Tilemap map, ChunkData chunk, WorldGeneratorSettings s)
+    // ─────────────────────────────────────────────────────────────────────
+    // ERASE — remove all tiles of a chunk
+    // ─────────────────────────────────────────────────────────────────────
+    public static void Erase(ChunkData chunk, WorldGeneratorSettings s)
     {
-        if (s.colorStepDarken <= 0f) return;
+        if (chunk == null) return;
+
         Vector2Int origin = chunk.WorldOrigin;
-        int size = chunk.chunkSize;
+        int        size   = chunk.chunkSize;
+
+        var terrainPos   = new Vector3Int[size * size];
+        var nullTiles    = new TileBase  [size * size]; // null = erase
+
+        var waterPos     = new Vector3Int[size * size];
+        var nullWater    = new TileBase  [size * size];
 
         for (int lx = 0; lx < size; lx++)
         for (int ly = 0; ly < size; ly++)
         {
-            int h = chunk.tileHeights[lx, ly];
-            if (h <= 0) continue;
-
-            int wx = origin.x + lx;
-            int wy = origin.y + ly;
-
-            // Surface = full brightness; each step below is darker
-            for (int col = 0; col < h; col++)
-            {
-                int depth = h - col;
-                float darken = Mathf.Clamp01(1f - depth * s.colorStepDarken);
-                Color c = new Color(darken, darken, darken, 1f);
-                map.SetColor(new Vector3Int(wx, wy, col), c);
-            }
-        }
-    }
-
-    // -------------------------------------------------------
-    // STACKED TILEMAP APPROACH — one Tilemap per Z level
-    // -------------------------------------------------------
-    static void PaintStacked(ChunkData chunk, WorldGeneratorSettings s,
-                             TilemapColumnManager mgr)
-    {
-        if (mgr == null)
-        {
-            Debug.LogError("[TilemapPainter] STACKED_TILEMAPS requires a TilemapColumnManager.");
-            return;
-        }
-
-        Vector2Int origin = chunk.WorldOrigin;
-        int size = chunk.chunkSize;
-
-        for (int lx = 0; lx < size; lx++)
-        for (int ly = 0; ly < size; ly++)
-        {
+            int i  = lx * size + ly;
             int wx = origin.x + lx;
             int wy = origin.y + ly;
             int h  = chunk.tileHeights[lx, ly];
-            var biome = chunk.biomeMap[lx, ly];
 
-            for (int col = 0; col <= h; col++)
-            {
-                Tilemap tm = mgr.GetOrCreate(col);
-                TileBase tile = (col == h)
-                    ? (biome?.surfaceTile  ?? s.defaultGroundTile)
-                    : (biome?.subsurfaceTile ?? s.defaultGroundTile);
-
-                if (tile != null) tm.SetTile(new Vector3Int(wx, wy, 0), tile);
-
-                // Color darken for sides
-                if (s.colorStepDarken > 0f)
-                {
-                    int depth = h - col;
-                    float d = Mathf.Clamp01(1f - depth * s.colorStepDarken);
-                    tm.SetColor(new Vector3Int(wx, wy, 0), new Color(d, d, d, 1f));
-                }
-            }
-
-            // Water
-            if (chunk.isWater[lx, ly] && s.waterTilemap != null)
-            {
-                TileBase wt = biome?.waterTile ?? s.defaultWaterTile;
-                if (wt != null)
-                    s.waterTilemap.SetTile(new Vector3Int(wx, wy, 0), wt);
-            }
+            terrainPos[i] = new Vector3Int(wx, wy, h);
+            waterPos[i]   = new Vector3Int(wx, wy, s.seaLevel);
         }
+
+        s.terrainTilemap?.SetTiles(terrainPos, nullTiles);
+        s.waterTilemap?.SetTiles(waterPos, nullWater);
     }
 }
