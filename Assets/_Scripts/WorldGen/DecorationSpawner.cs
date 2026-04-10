@@ -1,90 +1,143 @@
-﻿using UnityEngine;
-using UnityEngine.Tilemaps;
+﻿using System.Collections.Generic;
+using UnityEngine;
 
 /// <summary>
-/// Spawns decoration prefabs (trees, rocks, etc.) after terrain is generated.
+/// Spawns decoration prefabs (trees, rocks, logs) on generated terrain.
 /// Attach to Grid GameObject alongside ChunkManager.
-/// Called from ChunkManager after each chunk finishes generating.
+///
+/// Call SpawnForChunk() from ChunkManager after TilemapPainter.Paint().
+/// Call DespawnChunk() when a chunk is unloaded.
+///
+/// Prefab positioning:
+///   World XY = Grid.CellToWorld(cellPos) + jitter
+///   Z = small negative offset so decoration sorts in front of its tile
 /// </summary>
 public class DecorationSpawner : MonoBehaviour
 {
-    [Header("References")]
-    public WorldGeneratorSettings settings;
+    [Header("Settings")]
+    public DecorationSettings decorationSettings;
+    public WorldGeneratorSettings worldSettings;
 
-    [Header("Parent for spawned objects")]
-    [Tooltip("Optional: parent transform to keep hierarchy clean")]
+    [Header("Root")]
+    [Tooltip("Parent for spawned objects — keeps hierarchy clean.")]
     public Transform decorationRoot;
 
+    // chunk coord → list of spawned GameObjects for that chunk
+    private readonly Dictionary<Vector2Int, List<GameObject>> _chunkObjects = new();
+
     private Grid _grid;
+
+    // ── Lifecycle ──────────────────────────────────────────────────────────
 
     void Awake()
     {
         _grid = GetComponent<Grid>();
+
         if (decorationRoot == null)
         {
             var go = new GameObject("DecorationRoot");
-            go.transform.SetParent(transform);
+            go.transform.SetParent(transform, false);
             decorationRoot = go.transform;
         }
     }
 
-    /// <summary>
-    /// Spawns decorations for a fully-generated chunk.
-    /// Call this from ChunkManager after TilemapPainter.Paint().
-    /// </summary>
+    // ── Public API ─────────────────────────────────────────────────────────
+
+    /// <summary>Spawn all decorations for a freshly-generated chunk.</summary>
     public void SpawnForChunk(ChunkData chunk)
     {
-        if (settings?.biomeSettings == null) return;
+        if (decorationSettings == null) return;
+
+        Vector2Int coord  = chunk.chunkCoord;
+        if (_chunkObjects.ContainsKey(coord)) return; // already spawned
+
+        var spawnedList = new List<GameObject>();
+        _chunkObjects[coord] = spawnedList;
 
         Vector2Int origin = chunk.WorldOrigin;
-        int size          = chunk.chunkSize;
+        int        size   = chunk.chunkSize;
 
         for (int lx = 0; lx < size; lx++)
         for (int ly = 0; ly < size; ly++)
         {
             if (chunk.isWater[lx, ly]) continue;
 
-            var biome = chunk.biomeMap[lx, ly];
-            if (biome == null || biome.decorationPrefabs == null
-                || biome.decorationPrefabs.Length == 0) continue;
-
+            int   h        = chunk.tileHeights[lx, ly];
             float decoNoise = chunk.decorationNoiseMap[lx, ly];
-            if (decoNoise >= biome.decorationDensity) continue;
+            int   wx       = origin.x + lx;
+            int   wy       = origin.y + ly;
 
-            // Pick a random prefab from the biome's list
-            int idx = Random.Range(0, biome.decorationPrefabs.Length);
-            var prefab = biome.decorationPrefabs[idx];
-            if (prefab == null) continue;
+            foreach (var rule in decorationSettings.rules)
+            {
+                if (rule.prefabs == null || rule.prefabs.Length == 0) continue;
+                if (decoNoise >= rule.noiseThreshold)                 continue;
+                if (rule.landOnly && chunk.isWater[lx, ly])           continue;
+                if (h < rule.minHeight)                               continue;
+                if (rule.maxHeight > 0 && h > rule.maxHeight)         continue;
 
-            int h = chunk.tileHeights[lx, ly];
-            int wx = origin.x + lx;
-            int wy = origin.y + ly;
+                // Pick random prefab
+                int idx    = Random.Range(0, rule.prefabs.Length);
+                var prefab = rule.prefabs[idx];
+                if (prefab == null) continue;
 
-            // Convert tile cell to world position
-            Vector3 cellCenter = _grid != null
-                ? _grid.GetCellCenterWorld(new Vector3Int(wx, wy, 0))
-                : new Vector3(wx, wy, 0f);
+                // World position
+                Vector3 cellWorld = _grid != null
+                    ? _grid.GetCellCenterWorld(new Vector3Int(wx, wy, h))
+                    : new Vector3(wx, wy * 0.5f, 0f);
 
-            // Offset Z to sit on top of terrain
-            cellCenter.z = h * -0.01f;   // small Z offset for sorting
+                // Apply jitter and Z offset
+                Vector3 spawnPos = cellWorld
+                    + new Vector3(
+                        Random.Range(-rule.jitter, rule.jitter),
+                        Random.Range(-rule.jitter, rule.jitter),
+                        rule.zOffset);
 
-            var instance = Instantiate(prefab, cellCenter, Quaternion.identity, decorationRoot);
-            instance.name = $"{prefab.name}_{wx}_{wy}";
+                var instance = Instantiate(prefab, spawnPos, Quaternion.identity, decorationRoot);
+                instance.name = $"{rule.ruleName}_{wx}_{wy}";
+
+                // Auto-add ResourceNode if configured
+                if (rule.addResourceNode && instance.GetComponent<ResourceNode>() == null)
+                {
+                    var node             = instance.AddComponent<ResourceNode>();
+                    node.resourceType    = rule.resourceType;
+                    node.hitsRequired    = rule.hitsRequired;
+                    node.respawnTime     = rule.respawnTime;
+                    node.lootTable       = rule.lootTable;
+                    node.displayName     = rule.ruleName;
+                }
+
+                spawnedList.Add(instance);
+
+                // Only one rule per cell — take the first matching
+                break;
+            }
         }
     }
 
-    /// <summary>Destroys all spawned decoration objects.</summary>
+    /// <summary>Despawn all decorations for a chunk being unloaded.</summary>
+    public void DespawnChunk(Vector2Int chunkCoord)
+    {
+        if (!_chunkObjects.TryGetValue(chunkCoord, out var list)) return;
+
+        foreach (var go in list)
+        {
+            if (go != null)
+            {
+#if UNITY_EDITOR
+                if (!Application.isPlaying) DestroyImmediate(go);
+                else
+#endif
+                Destroy(go);
+            }
+        }
+
+        _chunkObjects.Remove(chunkCoord);
+    }
+
+    /// <summary>Despawn everything.</summary>
     public void ClearAll()
     {
-        if (decorationRoot == null) return;
-        for (int i = decorationRoot.childCount - 1; i >= 0; i--)
-        {
-#if UNITY_EDITOR
-            if (!Application.isPlaying)
-                DestroyImmediate(decorationRoot.GetChild(i).gameObject);
-            else
-#endif
-                Destroy(decorationRoot.GetChild(i).gameObject);
-        }
+        var coords = new List<Vector2Int>(_chunkObjects.Keys);
+        foreach (var c in coords) DespawnChunk(c);
     }
 }

@@ -294,7 +294,7 @@ TilemapRenderer:
   m_GlobalIlluminationMeshLod: 0
   m_SortingLayerID: 0
   m_SortingLayer: 0
-  m_SortingOrder: 1
+  m_SortingOrder: 2
   m_MaskInteraction: 0
   m_ChunkSize: {x: 32, y: 32, z: 32}
   m_ChunkCullingBounds: {x: 0, y: 0, z: 0}
@@ -443,8 +443,8 @@ Camera:
     serializedVersion: 2
     x: 0
     y: 0
-    width: 0.5324459
-    height: 0.7804878
+    width: 0.49883085
+    height: 0.7817589
   near clip plane: 0.3
   far clip plane: 1000
   field of view: 34
@@ -614,8 +614,8 @@ TilemapRenderer:
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: 0
-  m_SortingLayer: 0
+  m_SortingLayerID: -1759598395
+  m_SortingLayer: 1
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_ChunkSize: {x: 32, y: 32, z: 32}
@@ -675,6 +675,7 @@ GameObject:
   - component: {fileID: 1298896857}
   - component: {fileID: 1298896856}
   - component: {fileID: 1298896855}
+  - component: {fileID: 1298896859}
   m_Layer: 0
   m_Name: Grid
   m_TagString: Untagged
@@ -750,6 +751,21 @@ Transform:
   - {fileID: 254384380}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1298896859
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1298896854}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 68be69837ea344809d72eecaab1c4018, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DecorationSpawner
+  decorationSettings: {fileID: 11400000, guid: 844005ed4efe1f941bcaca727c22602e, type: 2}
+  worldSettings: {fileID: 11400000, guid: 17287f73ac9005f44ab47baa8968ed83, type: 2}
+  decorationRoot: {fileID: 254384380}
 --- !u!4 &1329255338 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 1223165933892469432, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
@@ -846,7 +862,10 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 943648227868954951, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2041663702}
   m_SourcePrefab: {fileID: 100100000, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
 --- !u!1 &1736007562
 GameObject:
@@ -932,6 +951,24 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &2041663697 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 943648227868954951, guid: 76d08b0f4d2d6914bbc4d19645a251e2, type: 3}
+  m_PrefabInstance: {fileID: 1670206145}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &2041663702
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2041663697}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9cd4b91398a94a238b90cdf2a4791b53, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerInventory
+  maxStackSize: 65
 --- !u!1 &2116128447
 GameObject:
   m_ObjectHideFlags: 0
@@ -1010,8 +1047,8 @@ TilemapRenderer:
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: 0
-  m_SortingLayer: 0
+  m_SortingLayerID: -1759598395
+  m_SortingLayer: 1
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_ChunkSize: {x: 32, y: 32, z: 32}

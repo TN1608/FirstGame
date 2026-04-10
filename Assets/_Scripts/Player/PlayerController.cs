@@ -3,95 +3,91 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// Isometric 2.5D Player Controller — New Input System only.
+/// Isometric Player Controller with harvesting support.
 ///
 /// Controls:
-///   WASD / Arrow Keys  → Move in isometric world directions
-///   Space              → Jump (parabolic arc over terrain)
-///   E                  → Interact (keyboard)
-///   Left Mouse Click   → Interact (mouse, world-space raycast)
-///
-/// No legacy UnityEngine.Input calls — all via InputActionReference or
-/// direct Keyboard/Mouse device reads from Input System.
-///
-/// Setup in Inspector:
-///   Assign Move / Jump / Interact / MouseInteract InputActionReferences
-///   from your Input Action Asset, OR leave them null to use the
-///   built-in Keyboard/Mouse fallback (no asset needed).
+///   WASD          → Move
+///   Space         → Jump
+///   E (tap)       → Interact / single hit
+///   E (hold)      → Repeated harvest hits (minecraft-style)
+///   Left Click    → Interact at mouse world position
 /// </summary>
 [RequireComponent(typeof(Rigidbody2D))]
 public class PlayerController : MonoBehaviour
 {
-    // ── Inspector ─────────────────────────────────────────────────────────
-
     [Header("Movement")]
-    public float moveSpeed     = 5f;
-    public float acceleration  = 18f;
-    public float deceleration  = 24f;
+    public float moveSpeed    = 5f;
+    public float acceleration = 18f;
+    public float deceleration = 24f;
 
     [Header("Jump")]
-    public float jumpArcHeight = 0.6f;   // visual Z units at peak
+    public float jumpArcHeight = 0.6f;
     public float jumpDuration  = 0.32f;
 
-    [Header("Step / Terrain")]
-    public float stepHeight         = 1.2f;   // auto-step if height diff ≤ this
-    public float heightFollowSpeed  = 12f;
-    public float heightVisualScale  = 0.05f;  // world-Z offset per tile height unit
+    [Header("Terrain")]
+    public float heightFollowSpeed = 12f;
+    public float heightVisualScale = 0.05f;
 
     [Header("Interaction")]
-    public float interactRange  = 1.5f;
-    public LayerMask interactLayer = ~0;
+    public float     interactRange    = 1.5f;
+    public LayerMask interactLayer    = ~0;
+    [Tooltip("Hits per second when holding E.")]
+    public float     harvestHitRate   = 2f;
 
-    [Header("Input Action References (optional)")]
-    [Tooltip("Leave null to use built-in WASD / Space / E / LMB fallback.")]
+    [Header("Input Actions (optional)")]
     public InputActionReference moveAction;
     public InputActionReference jumpAction;
-    public InputActionReference interactKeyAction;
-    public InputActionReference interactMouseAction;
+    public InputActionReference interactAction;
+    public InputActionReference mouseInteractAction;
 
     [Header("References")]
-    public ChunkManager    chunkManager;
-    public Camera          mainCamera;
-    public SpriteRenderer  spriteRenderer;
+    public ChunkManager   chunkManager;
+    public Camera         mainCamera;
+    public SpriteRenderer spriteRenderer;
 
-    // ── Private ───────────────────────────────────────────────────────────
+    // ── Private ────────────────────────────────────────────────────────────
 
     private Rigidbody2D _rb;
     private Vector2     _moveInput;
     private Vector2     _velocity;
     private float       _visualZ;
-    private bool        _grounded     = true;
-    private bool        _jumpConsumed = false;
+    private bool        _grounded    = true;
+    private float       _holdTimer;
+    private float       _harvestInterval;
 
-    // Isometric axis vectors (WASD → isometric world XY)
-    //   D = right-down,  A = left-up
-    //   W = right-up,    S = left-down
-    static readonly Vector2 IsoE = new Vector2( 1f, -0.5f).normalized;   // D
-    static readonly Vector2 IsoN = new Vector2( 1f,  0.5f).normalized;   // W
-
-    // ── Lifecycle ─────────────────────────────────────────────────────────
+    static readonly Vector2 IsoE = new Vector2( 1f, -0.5f).normalized;
+    static readonly Vector2 IsoN = new Vector2( 1f,  0.5f).normalized;
 
     void Awake()
     {
         _rb = GetComponent<Rigidbody2D>();
-        _rb.gravityScale   = 0f;    // gravity handled manually via terrain height
+        _rb.gravityScale   = 0f;
         _rb.freezeRotation = true;
         _rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
 
-        if (mainCamera   == null) mainCamera   = Camera.main;
+        if (mainCamera  == null) mainCamera  = Camera.main;
         if (chunkManager == null) chunkManager = FindFirstObjectByType<ChunkManager>();
 
-        EnableActions();
+        _harvestInterval = 1f / Mathf.Max(harvestHitRate, 0.1f);
+
+        moveAction?.action?.Enable();
+        jumpAction?.action?.Enable();
+        interactAction?.action?.Enable();
+        mouseInteractAction?.action?.Enable();
     }
 
-    void OnEnable()  => EnableActions();
-    void OnDisable() => DisableActions();
+    void OnDisable()
+    {
+        moveAction?.action?.Disable();
+        jumpAction?.action?.Disable();
+        interactAction?.action?.Disable();
+        mouseInteractAction?.action?.Disable();
+    }
 
     void Update()
     {
-        ReadMovementInput();
-        ReadActionInput();
-
+        ReadMovement();
+        ReadActions();
         if (chunkManager != null)
             chunkManager.LoadChunksAroundPosition(transform.position);
     }
@@ -102,73 +98,80 @@ public class PlayerController : MonoBehaviour
         FollowTerrain();
     }
 
-    // ── Input ─────────────────────────────────────────────────────────────
+    // ── Input ──────────────────────────────────────────────────────────────
 
-    void ReadMovementInput()
+    void ReadMovement()
     {
         Vector2 raw = Vector2.zero;
+        var kb = Keyboard.current;
 
         if (moveAction?.action != null)
-        {
             raw = moveAction.action.ReadValue<Vector2>();
-        }
-        else
+        else if (kb != null)
         {
-            // Built-in fallback — Keyboard device, no legacy Input class
-            var kb = Keyboard.current;
-            if (kb == null) return;
-
             if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) raw.x += 1f;
             if (kb.aKey.isPressed || kb.leftArrowKey.isPressed)  raw.x -= 1f;
             if (kb.wKey.isPressed || kb.upArrowKey.isPressed)    raw.y += 1f;
             if (kb.sKey.isPressed || kb.downArrowKey.isPressed)  raw.y -= 1f;
         }
 
-        // Convert WASD screen-space to isometric world-space
-        // D/A → along IsoE axis;  W/S → along IsoN axis
-        _moveInput  = raw.x * IsoE + raw.y * IsoN;
+        _moveInput = raw.x * IsoE + raw.y * IsoN;
         if (_moveInput.sqrMagnitude > 1f) _moveInput.Normalize();
 
-        // Flip sprite on horizontal direction
         if (spriteRenderer != null && Mathf.Abs(_moveInput.x) > 0.05f)
             spriteRenderer.flipX = _moveInput.x < 0f;
     }
 
-    void ReadActionInput()
+    void ReadActions()
     {
-        bool jumpPressed      = false;
-        bool interactPressed  = false;
-        bool mousePressed     = false;
-
         var kb    = Keyboard.current;
         var mouse = Mouse.current;
 
-        // Jump
-        if (jumpAction?.action != null)
-            jumpPressed = jumpAction.action.WasPressedThisFrame();
-        else if (kb != null)
-            jumpPressed = kb.spaceKey.wasPressedThisFrame;
+        // ── Jump ──
+        bool jumpPressed = jumpAction?.action != null
+            ? jumpAction.action.WasPressedThisFrame()
+            : kb?.spaceKey.wasPressedThisFrame ?? false;
 
-        // Keyboard interact (E)
-        if (interactKeyAction?.action != null)
-            interactPressed = interactKeyAction.action.WasPressedThisFrame();
-        else if (kb != null)
-            interactPressed = kb.eKey.wasPressedThisFrame;
-
-        // Mouse interact (Left Click)
-        if (interactMouseAction?.action != null)
-            mousePressed = interactMouseAction.action.WasPressedThisFrame();
-        else if (mouse != null)
-            mousePressed = mouse.leftButton.wasPressedThisFrame;
-
-        if (jumpPressed && _grounded && !_jumpConsumed)
-        {
-            _jumpConsumed = true;
+        if (jumpPressed && _grounded)
             StartCoroutine(JumpArc());
+
+        // ── E: tap = single interact, hold = repeated harvest ──
+        bool eDown = interactAction?.action != null
+            ? interactAction.action.WasPressedThisFrame()
+            : kb?.eKey.wasPressedThisFrame ?? false;
+
+        bool eHeld = interactAction?.action != null
+            ? interactAction.action.IsPressed()
+            : kb?.eKey.isPressed ?? false;
+
+        if (eDown)
+        {
+            // Single tap — try interact first, then single harvest hit
+            TryInteract(useMousePos: false, singleHit: true);
+            _holdTimer = 0f;
+        }
+        else if (eHeld)
+        {
+            // Hold — repeated harvest
+            _holdTimer += Time.deltaTime;
+            if (_holdTimer >= _harvestInterval)
+            {
+                _holdTimer -= _harvestInterval;
+                TryHarvestHit();
+            }
+        }
+        else
+        {
+            _holdTimer = 0f;
         }
 
-        if (interactPressed) TryInteract(useMousePos: false);
-        if (mousePressed)    TryInteract(useMousePos: true);
+        // ── Left Click ──
+        bool mouseClick = mouseInteractAction?.action != null
+            ? mouseInteractAction.action.WasPressedThisFrame()
+            : mouse?.leftButton.wasPressedThisFrame ?? false;
+
+        if (mouseClick)
+            TryInteract(useMousePos: true, singleHit: true);
     }
 
     // ── Movement ──────────────────────────────────────────────────────────
@@ -184,56 +187,64 @@ public class PlayerController : MonoBehaviour
     void FollowTerrain()
     {
         if (chunkManager == null || !_grounded) return;
-
-        float terrainH  = chunkManager.GetHeightAtPosition(transform.position);
-        float targetZ   = terrainH * heightVisualScale;
-        _visualZ        = Mathf.Lerp(_visualZ, targetZ, Time.fixedDeltaTime * heightFollowSpeed);
-
-        var pos  = transform.position;
-        pos.z    = _visualZ;
+        float targetZ = chunkManager.GetHeightAtPosition(transform.position) * heightVisualScale;
+        _visualZ      = Mathf.Lerp(_visualZ, targetZ, Time.fixedDeltaTime * heightFollowSpeed);
+        var pos = transform.position;
+        pos.z = _visualZ;
         transform.position = pos;
     }
 
     IEnumerator JumpArc()
     {
         _grounded = false;
-        float startZ   = _visualZ;
-        float elapsed  = 0f;
-
+        float startZ  = _visualZ;
+        float elapsed = 0f;
         while (elapsed < jumpDuration)
         {
-            elapsed  += Time.deltaTime;
-            float t   = elapsed / jumpDuration;
-            // Parabola: peaks at t=0.5
-            float arc = 4f * t * (1f - t);
+            elapsed += Time.deltaTime;
+            float arc = 4f * (elapsed / jumpDuration) * (1f - elapsed / jumpDuration);
             _visualZ  = startZ + arc * jumpArcHeight;
-
-            var pos  = transform.position;
-            pos.z    = _visualZ;
-            transform.position = pos;
-
+            var p = transform.position; p.z = _visualZ; transform.position = p;
             yield return null;
         }
-
-        _grounded     = true;
-        _jumpConsumed = false;
+        _grounded = true;
     }
 
-    // ── Interact ──────────────────────────────────────────────────────────
+    // ── Interaction & Harvesting ───────────────────────────────────────────
 
-    void TryInteract(bool useMousePos)
+    void TryInteract(bool useMousePos, bool singleHit)
+    {
+        var (hit, node) = RaycastForTarget(useMousePos);
+
+        if (node != null)
+        {
+            // It's a resource node — deliver one hit
+            node.HarvestHit(1, gameObject);
+        }
+        else if (hit.collider != null)
+        {
+            // Generic interactable
+            hit.collider.GetComponent<IInteractable>()?.Interact(gameObject);
+        }
+    }
+
+    void TryHarvestHit()
+    {
+        var (_, node) = RaycastForTarget(false);
+        node?.HarvestHit(1, gameObject);
+    }
+
+    (RaycastHit2D hit, ResourceNode node) RaycastForTarget(bool useMousePos)
     {
         Vector2 origin;
         Vector2 dir;
 
         if (useMousePos && mainCamera != null && Mouse.current != null)
         {
-            // Mouse position → world space (ignore Z)
-            Vector3 wp = mainCamera.ScreenToWorldPoint(
-                new Vector3(Mouse.current.position.ReadValue().x,
-                            Mouse.current.position.ReadValue().y, 10f));
-            origin = transform.position;
-            dir    = ((Vector2)wp - origin).normalized;
+            var mp  = Mouse.current.position.ReadValue();
+            var wp  = mainCamera.ScreenToWorldPoint(new Vector3(mp.x, mp.y, 10f));
+            origin  = transform.position;
+            dir     = ((Vector2)wp - origin).normalized;
         }
         else
         {
@@ -241,42 +252,14 @@ public class PlayerController : MonoBehaviour
             dir    = _moveInput.sqrMagnitude > 0.01f ? _moveInput : Vector2.right;
         }
 
-        RaycastHit2D hit = Physics2D.Raycast(origin, dir, interactRange, interactLayer);
-        if (hit.collider != null)
-        {
-            var interactable = hit.collider.GetComponent<IInteractable>();
-            interactable?.Interact(gameObject);
-            Debug.Log($"[Player] Interacted with {hit.collider.name}");
-        }
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────
-
-    void EnableActions()
-    {
-        moveAction?.action?.Enable();
-        jumpAction?.action?.Enable();
-        interactKeyAction?.action?.Enable();
-        interactMouseAction?.action?.Enable();
-    }
-
-    void DisableActions()
-    {
-        moveAction?.action?.Disable();
-        jumpAction?.action?.Disable();
-        interactKeyAction?.action?.Disable();
-        interactMouseAction?.action?.Disable();
+        var hit  = Physics2D.Raycast(origin, dir, interactRange, interactLayer);
+        var node = hit.collider?.GetComponent<ResourceNode>();
+        return (hit, node);
     }
 
     void OnDrawGizmosSelected()
     {
-        Gizmos.color = Color.cyan;
+        Gizmos.color = Color.yellow;
         Gizmos.DrawWireSphere(transform.position, interactRange);
     }
-}
-
-/// <summary>Implement on any GameObject to make it interactable.</summary>
-public interface IInteractable
-{
-    void Interact(GameObject instigator);
 }
